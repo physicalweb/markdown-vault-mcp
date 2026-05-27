@@ -193,6 +193,17 @@ def make_server(transport: str = "stdio") -> FastMCP:
     # include_traceback=None infers from root log level (-v→DEBUG→tracebacks); transform_errors=False lets exceptions propagate to FastMCP's own handlers.
     wire_middleware_stack(mcp, include_traceback=None, transform_errors=False)
 
+    # Per-request git author attribution (fork-only feature; not upstream).
+    # When MARKDOWN_VAULT_MCP_GIT_AUTHOR_MAPPING is set, this middleware
+    # reads the validated OIDC subject from the access token, looks it up
+    # in the mapping yaml, and sets a contextvar that git.py's
+    # _stage_and_commit reads to add a --author flag. No-op when unset.
+    from ._author_middleware import GitAuthorAttributionMiddleware
+
+    mcp.add_middleware(
+        GitAuthorAttributionMiddleware(mapping_path=config.git_author_mapping_path)
+    )
+
     # Optional: enable opt-in per-subject authorization on tools / resources /
     # prompts.  See fastmcp-pvl-core's README "Authorization" section for the
     # design.  Tools, resources, and prompts opt in by setting

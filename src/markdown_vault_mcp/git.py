@@ -2545,25 +2545,48 @@ def _stage_and_commit(
 
     commit_msg = f"{operation}: {rel_path}"
 
+    # Per-request author override (set by GitAuthorAttributionMiddleware
+    # from the validated OIDC token; falls back to None when unset). When
+    # set, the commit's `author` field reflects the real human; the
+    # `committer` field stays as the configured server identity (used for
+    # the push credential). Standard git distinction for shared-push-
+    # credential / real-human-author workflows.
+    from ._author_context import get_author
+
+    author = get_author()
+
+    commit_args = [
+        "git",
+        "-C",
+        root,
+        "-c",
+        f"user.name={commit_name}",
+        "-c",
+        f"user.email={commit_email}",
+        "commit",
+        "-m",
+        commit_msg,
+    ]
+    if author is not None:
+        commit_args.extend(["--author", f"{author[0]} <{author[1]}>"])
+
     subprocess.run(
-        [
-            "git",
-            "-C",
-            root,
-            "-c",
-            f"user.name={commit_name}",
-            "-c",
-            f"user.email={commit_email}",
-            "commit",
-            "-m",
-            commit_msg,
-        ],
+        commit_args,
         capture_output=True,
         text=True,
         check=True,
     )
 
-    logger.info("Git: committed %s (%s)", rel_path, operation)
+    if author is not None:
+        logger.info(
+            "Git: committed %s (%s) authored by %s <%s>",
+            rel_path,
+            operation,
+            author[0],
+            author[1],
+        )
+    else:
+        logger.info("Git: committed %s (%s)", rel_path, operation)
 
 
 def _push(git_root: Path, token: str | None, username: str = "x-access-token") -> None:

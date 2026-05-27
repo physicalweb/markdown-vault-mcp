@@ -182,6 +182,7 @@ class CollectionConfig:
     git_commit_email: str = "noreply@markdown-vault-mcp"
     git_lfs: bool = True
     git_pull_interval_s: int = 600
+    git_author_mapping_path: Path | None = None
     attachment_extensions: list[str] | None = None
     max_attachment_size_mb: float = 1.0  # MB; 0 = unlimited
     max_note_read_bytes: int = 262144  # 256 KB; 0 = unlimited
@@ -568,6 +569,12 @@ def load_config() -> CollectionConfig:
         git_pull_interval_s = 0
     logger.debug("load_config: git_pull_interval_s=%s", git_pull_interval_s)
 
+    raw_git_author_mapping = (_env("GIT_AUTHOR_MAPPING") or "").strip()
+    git_author_mapping_path: Path | None = (
+        Path(raw_git_author_mapping) if raw_git_author_mapping else None
+    )
+    logger.debug("load_config: git_author_mapping_path=%s", git_author_mapping_path)
+
     raw_attachment_extensions = (_env("ATTACHMENT_EXTENSIONS") or "").strip()
     attachment_extensions: list[str] | None
     if not raw_attachment_extensions:
@@ -838,6 +845,7 @@ def load_config() -> CollectionConfig:
         git_commit_email=git_commit_email,
         git_lfs=git_lfs,
         git_pull_interval_s=git_pull_interval_s,
+        git_author_mapping_path=git_author_mapping_path,
         attachment_extensions=attachment_extensions,
         max_attachment_size_mb=max_attachment_size_mb,
         max_note_read_bytes=max_note_read_bytes,
