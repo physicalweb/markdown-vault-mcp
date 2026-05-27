@@ -266,7 +266,14 @@ class Collection:
         # Deferred write callback queue (issue #175).  Git commit (on_write
         # callback) runs in a background worker thread so write methods
         # return immediately after the FTS update.
-        self._callback_queue: queue.Queue[tuple[Path, str, str] | None] = queue.Queue()
+        #
+        # Queue item shape — accepts either:
+        #   - Legacy 3-tuple: (abs_path, content, operation)
+        #   - New 4-tuple:    (abs_path, content, operation, captured_context)
+        # The 4-tuple form propagates the producer's contextvars across
+        # the async→thread boundary; required for per-request middleware
+        # state (e.g., OIDC author identity) to reach the callback.
+        self._callback_queue: queue.Queue[tuple[Any, ...] | None] = queue.Queue()
         self._callback_worker: threading.Thread | None = None
         self._callback_worker_lock = threading.Lock()
 
@@ -957,7 +964,16 @@ class Collection:
                     item = self._callback_queue.get()
                     if item is None:
                         break
-                    abs_path, content, operation = item
+                    # Backward-compatible unpack: legacy 3-tuple OR new
+                    # 4-tuple (with captured producer-side context). The
+                    # 4-tuple form propagates contextvars set by the
+                    # async middleware (e.g., per-request OIDC author
+                    # identity) across the asyncio→thread boundary.
+                    if len(item) == 4:
+                        abs_path, content, operation, ctx = item
+                    else:
+                        abs_path, content, operation = item
+                        ctx = None
                     try:
                         if self._on_write is None:
                             logger.error(
@@ -966,7 +982,14 @@ class Collection:
                                 operation,
                             )
                             continue
-                        self._on_write(abs_path, content, operation)
+                        # Re-narrow operation to the Literal expected by
+                        # WriteCallback (queue items are typed loosely
+                        # to accept legacy 3-tuple OR new 4-tuple form).
+                        op: Literal["write", "edit", "delete", "rename"] = operation
+                        if ctx is not None:
+                            ctx.run(self._on_write, abs_path, content, op)
+                        else:
+                            self._on_write(abs_path, content, op)
                     except Exception:
                         logger.error(
                             "Write callback failed for %s (%s)",
@@ -983,11 +1006,22 @@ class Collection:
     def _fire_write_callback(
         self, abs_path: Path, content: str, operation: str
     ) -> None:
-        """Submit a write callback to the background worker thread."""
+        """Submit a write callback to the background worker thread.
+
+        Captures the producer-side ``contextvars`` context and includes
+        it in the queue payload so the worker thread can re-enter it via
+        ``ctx.run(...)``. This is required for per-request middleware
+        state (e.g., OIDC author identity set by GitAuthorAttribution-
+        Middleware) to reach the callback running on the dedicated
+        write-callback thread.
+        """
         if self._on_write is None:
             return
         self._ensure_callback_worker()
-        self._callback_queue.put((abs_path, content, operation))
+        import contextvars
+
+        ctx = contextvars.copy_context()
+        self._callback_queue.put((abs_path, content, operation, ctx))
 
     def read_attachment(self, path: str) -> AttachmentContent:
         """Read the binary content of a non-.md attachment.
