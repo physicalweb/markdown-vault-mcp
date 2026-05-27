@@ -2554,6 +2554,12 @@ def _stage_and_commit(
     from ._author_context import get_author
 
     author = get_author()
+    import threading as _t
+    logger.info(
+        "_stage_and_commit: read author contextvar -> %r (thread=%s)",
+        author,
+        _t.current_thread().name,
+    )
 
     commit_args = [
         "git",
