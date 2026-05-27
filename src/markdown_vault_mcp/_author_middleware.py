@@ -162,17 +162,7 @@ class GitAuthorAttributionMiddleware(Middleware):
         context: MiddlewareContext[Any],
         call_next: CallNext[Any, Any],
     ) -> Any:
-        token_obj = get_access_token()
-        sub_raw = None
-        if token_obj is not None and isinstance(token_obj.claims, dict):
-            sub_raw = token_obj.claims.get("sub")
         identity = self._resolve()
-        logger.info(
-            "GitAuthorAttributionMiddleware.on_call_tool: token=%s sub=%r identity=%s",
-            "present" if token_obj is not None else "none",
-            sub_raw,
-            f"{identity.name} <{identity.email}>" if identity is not None else "None",
-        )
         if identity is None:
             return await call_next(context)
         ctx_token = _author_context.set_author(identity.name, identity.email)
