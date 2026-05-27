@@ -515,9 +515,16 @@ class IndexManager:
         vectors = self._get_vectors()
         if vectors is None:
             raise ValueError("Vector index unexpectedly None after initialisation")
+        # Use provider-recommended batch size: defaults to 4 (FastEmbed/ONNX
+        # memory safe) but OpenAI/Ollama can override to amortize HTTP
+        # round-trip overhead. Falls back to the legacy constant when the
+        # provider doesn't expose `recommended_batch_size` (older versions).
+        batch_size = getattr(
+            vectors._provider, "recommended_batch_size", _EMBEDDING_BATCH_SIZE
+        ) if hasattr(vectors, "_provider") else _EMBEDDING_BATCH_SIZE
         total = len(texts)
-        for start in range(0, total, _EMBEDDING_BATCH_SIZE):
-            end = min(start + _EMBEDDING_BATCH_SIZE, total)
+        for start in range(0, total, batch_size):
+            end = min(start + batch_size, total)
             vectors.add(texts[start:end], meta[start:end])
             logger.info(
                 "build_embeddings: embedded chunks %d-%d of %d",

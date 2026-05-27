@@ -66,6 +66,17 @@ class EmbeddingProvider(ABC):
         """Stable model identifier for index compatibility metadata."""
         ...
 
+    @property
+    def recommended_batch_size(self) -> int:
+        """Recommended chunk batch size for bulk embedding.
+
+        Defaults to a conservative 4 (matches the FastEmbed/ONNX memory
+        constraint that originally motivated the module-level constant).
+        API-backed providers (OpenAI, Ollama HTTP) can override with a
+        larger value to amortize per-request HTTP overhead.
+        """
+        return 4
+
 
 class OllamaProvider(EmbeddingProvider):
     """Embedding provider backed by the Ollama REST API.
@@ -293,6 +304,14 @@ class OpenAIProvider(EmbeddingProvider):
     @property
     def model_name(self) -> str:
         return self._model
+
+    @property
+    def recommended_batch_size(self) -> int:
+        """OpenAI accepts up to 2048 inputs per /v1/embeddings call. Using
+        a large batch amortizes the per-request HTTP overhead — first-boot
+        embedding goes from O(seconds × N/4) to O(seconds × N/256).
+        Below 2048 to leave headroom for token limits per request."""
+        return 256
 
 
 class FastEmbedProvider(EmbeddingProvider):
