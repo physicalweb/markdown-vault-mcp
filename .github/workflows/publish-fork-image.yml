@@ -9,6 +9,7 @@ on:
   push:
     branches:
       - feat/per-user-author-attribution
+      - feat/webhook-and-persona-attribution
   workflow_dispatch:
 
 env:
