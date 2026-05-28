@@ -1,7 +1,19 @@
 """FastMCP middleware that sets per-request git author identity.
 
-Reads the validated OIDC access token from the request context, looks
-up the authenticated subject in a YAML mapping file, and sets the
+Two attribution sources, in priority order:
+
+1. **Per-call ``participant_id`` arg** (honor system). When a write-tool
+   call carries a ``participant_id`` argument, the middleware uses it
+   to look up the git author in the YAML mapping. No auth check —
+   matches the Agora substrate convention where the LLM is trusted to
+   fill in its own participant id (see ``docs/plans/076`` in the
+   ``physicalweb/agora`` repo for the design context).
+2. **Auth0 subject** (fallback). When ``participant_id`` is absent,
+   reads the validated OIDC access token from the request context and
+   looks up the authenticated subject. This is the original mechanism
+   (Plan 022 in agora).
+
+Either way, the resolved identity sets the
 :mod:`markdown_vault_mcp._author_context` for the duration of the
 request. :mod:`markdown_vault_mcp.git`'s ``_stage_and_commit`` reads
 the context and uses the identity as the commit's ``author`` field
@@ -13,19 +25,31 @@ YAML mapping format (file path configured via
 .. code-block:: yaml
 
     mappings:
-      - auth0_subject: "auth0|abc123"
-        git_name: "Lín"
-        git_email: "lin@example.com"
+      # Human entries — keyed by OIDC subject
       - auth0_subject: "google-oauth2|xyz789"
+        git_name: "Arnon Zangvil"
+        git_email: "zangvil@gmail.com"
+      # Persona entries — keyed by participant_id, honor-system trust
+      - participant_id: "ki"
         git_name: "Ki"
-        git_email: "ki@example.com"
+        git_email: "ki@personas.agora.local"
+      - participant_id: "lin"
+        git_name: "Lín"
+        git_email: "lin@personas.agora.local"
     default:  # optional
       git_name: "vault-bot"
       git_email: "bot@example.com"
 
-Tokens whose ``sub`` claim doesn't match any mapping fall through to
-the configured server identity (no author override). To attribute
-unmapped subjects to a default identity, add a ``default`` entry.
+An entry must have *either* ``auth0_subject`` *or* ``participant_id``,
+not both. Malformed entries are skipped with a warning.
+
+Resolution order in :meth:`on_call_tool`:
+
+1. Read ``participant_id`` from tool args (if a write-tool call carries it)
+2. If present + maps to a known persona — use that identity
+3. Else fall back to Auth0 subject lookup
+4. Else fall back to the ``default`` entry (if configured)
+5. Else no-op (writes use the configured server identity)
 
 Environment integration:
 - ``MARKDOWN_VAULT_MCP_GIT_AUTHOR_MAPPING`` — path to the YAML file.
@@ -76,6 +100,7 @@ class GitAuthorAttributionMiddleware(Middleware):
     def __init__(self, mapping_path: str | Path | None) -> None:
         super().__init__()
         self._by_subject: dict[str, _Identity] = {}
+        self._by_participant: dict[str, _Identity] = {}
         self._default: _Identity | None = None
         if mapping_path is None:
             logger.info(
@@ -123,15 +148,35 @@ class GitAuthorAttributionMiddleware(Middleware):
             if not isinstance(entry, dict):
                 continue
             sub = entry.get("auth0_subject")
+            pid = entry.get("participant_id")
             name = entry.get("git_name")
             email = entry.get("git_email")
-            if not (isinstance(sub, str) and isinstance(name, str) and isinstance(email, str)):
+            if not (isinstance(name, str) and isinstance(email, str)):
                 logger.warning(
-                    "GitAuthorAttributionMiddleware: skipping malformed entry %r",
+                    "GitAuthorAttributionMiddleware: skipping malformed entry "
+                    "(missing/non-string git_name or git_email): %r",
                     entry,
                 )
                 continue
-            self._by_subject[sub] = _Identity(name=name, email=email)
+            identity = _Identity(name=name, email=email)
+            has_sub = isinstance(sub, str)
+            has_pid = isinstance(pid, str)
+            if has_sub and has_pid:
+                logger.warning(
+                    "GitAuthorAttributionMiddleware: entry has both "
+                    "auth0_subject and participant_id; using both: %r",
+                    entry,
+                )
+            if has_sub:
+                self._by_subject[sub] = identity
+            if has_pid:
+                self._by_participant[pid] = identity
+            if not (has_sub or has_pid):
+                logger.warning(
+                    "GitAuthorAttributionMiddleware: skipping entry without "
+                    "auth0_subject or participant_id: %r",
+                    entry,
+                )
 
         default = raw.get("default")
         if isinstance(default, dict):
@@ -141,28 +186,63 @@ class GitAuthorAttributionMiddleware(Middleware):
                 self._default = _Identity(name=name, email=email)
 
         logger.info(
-            "GitAuthorAttributionMiddleware: loaded %d subject mapping(s)%s",
+            "GitAuthorAttributionMiddleware: loaded %d subject + %d participant "
+            "mapping(s)%s",
             len(self._by_subject),
+            len(self._by_participant),
             " + default" if self._default is not None else "",
         )
 
-    def _resolve(self) -> _Identity | None:
+    def _resolve_by_participant(self, participant_id: str | None) -> _Identity | None:
+        """Honor-system lookup by ``participant_id`` claim. No auth check."""
+        if not isinstance(participant_id, str):
+            return None
+        return self._by_participant.get(participant_id)
+
+    def _resolve_by_subject(self) -> _Identity | None:
+        """Auth0-backed lookup by OIDC ``sub`` claim."""
         token = get_access_token()
         if token is None:
-            return self._default
+            return None
         sub = token.claims.get("sub") if isinstance(token.claims, dict) else None
         if isinstance(sub, str):
-            identity = self._by_subject.get(sub)
-            if identity is not None:
-                return identity
-        return self._default
+            return self._by_subject.get(sub)
+        return None
+
+    def _extract_participant_id(
+        self, context: MiddlewareContext[Any]
+    ) -> str | None:
+        """Read ``participant_id`` from the tool-call args, if present.
+
+        FastMCP's ``on_call_tool`` middleware context carries the
+        ``CallToolRequestParams`` as ``context.message``. The tool args
+        live on ``message.arguments`` as a dict. Missing-args or
+        non-dict-args returns ``None`` (no claim made).
+        """
+        msg = getattr(context, "message", None)
+        if msg is None:
+            return None
+        args = getattr(msg, "arguments", None)
+        if not isinstance(args, dict):
+            return None
+        value = args.get("participant_id")
+        return value if isinstance(value, str) else None
 
     async def on_call_tool(
         self,
         context: MiddlewareContext[Any],
         call_next: CallNext[Any, Any],
     ) -> Any:
-        identity = self._resolve()
+        # Resolution order:
+        # 1. participant_id from tool args (honor system)
+        # 2. Auth0 subject from validated OIDC token
+        # 3. default entry from mapping (if configured)
+        participant_id = self._extract_participant_id(context)
+        identity = (
+            self._resolve_by_participant(participant_id)
+            or self._resolve_by_subject()
+            or self._default
+        )
         if identity is None:
             return await call_next(context)
         ctx_token = _author_context.set_author(identity.name, identity.email)

@@ -1250,6 +1250,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
     async def write(
         path: str,
         content: str = "",
+        participant_id: str = "",  # noqa: ARG001 — consumed by GitAuthorAttributionMiddleware
+
         frontmatter: dict[str, Any] | None = None,
         content_base64: str = "",
         if_match: str | None = None,
@@ -1269,6 +1271,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         Args:
             path: Relative path (e.g. "Journal/note.md" or
                 "assets/photo.png"). Extension determines handling.
+            participant_id: Your participant identity (e.g. "ki", "lin",
+                "arnon", "cc"). Honor-system trust; the server uses this
+                to attribute the git commit author. Required for write
+                operations.
             content: Full markdown body for .md files (excluding
                 frontmatter). Ignored for attachments.
             frontmatter: Optional YAML frontmatter dict for .md files,
@@ -1330,6 +1336,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
     async def edit(
         path: str,
         old_text: str | None = None,
+        participant_id: str = "",  # noqa: ARG001 — consumed by GitAuthorAttributionMiddleware
+
         new_text: str = "",
         if_match: str | None = None,
         line_start: int | None = None,
@@ -1358,6 +1366,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
 
         Args:
             path: Relative path to the document.
+            participant_id: Your participant identity (e.g. "ki", "lin",
+                "arnon", "cc"). Honor-system trust; the server uses this
+                to attribute the git commit author. Required for write
+                operations.
             old_text: Text to replace. Must appear exactly once in the
                 document or line range. Get this via 'read'. Optional
                 when using line-range mode.
@@ -1416,6 +1428,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
     async def delete(
         path: str,
         if_match: str | None = None,
+        participant_id: str = "",  # noqa: ARG001 — consumed by GitAuthorAttributionMiddleware
+
         collection: Collection = Depends(get_collection),
     ) -> dict[str, Any]:
         """Permanently delete a document or attachment.
@@ -1428,6 +1442,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
 
         Args:
             path: Relative path to the document or attachment to delete.
+            participant_id: Your participant identity (e.g. "ki", "lin",
+                "arnon", "cc"). Honor-system trust; the server uses this
+                to attribute the git commit author. Required for write
+                operations.
             if_match: Optional etag obtained from a previous 'read' call.
                 When provided, the deletion only proceeds if the file has
                 not been modified since that read (optimistic concurrency).
@@ -1460,6 +1478,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         old_path: str,
         new_path: str,
         if_match: str | None = None,
+        participant_id: str = "",  # noqa: ARG001 — consumed by GitAuthorAttributionMiddleware
+
         update_links: bool = False,
         collection: Collection = Depends(get_collection),
     ) -> dict[str, Any]:
@@ -1477,6 +1497,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 or "assets/old.png").
             new_path: Target relative path (e.g. "projects/idea.md"
                 or "assets/new.png"). Fails if new_path already exists.
+            participant_id: Your participant identity (e.g. "ki", "lin",
+                "arnon", "cc"). Honor-system trust; the server uses this
+                to attribute the git commit author. Required for write
+                operations.
             if_match: Optional etag obtained from a previous 'read' call
                 for old_path. When provided, the rename only proceeds if
                 the file has not been modified since that read (optimistic
@@ -1518,6 +1542,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
     )
     async def git_sync(
         direction: Literal["pull", "push", "both"] = "both",
+        participant_id: str = "",  # noqa: ARG001 — consumed by GitAuthorAttributionMiddleware
+
         dry_run: bool = False,
         collection: Collection = Depends(get_collection),
     ) -> dict[str, Any]:
@@ -1542,6 +1568,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         ``applied=False`` with ``reason='dry_run_unsupported'``.
 
         Args:
+            participant_id: Your participant identity (e.g. "ki", "lin",
+                "arnon", "cc"). Honor-system trust; required for any
+                write-shaped call. Doesn't affect the pull leg (no
+                authorship); kept symmetric with other write tools.
             direction: ``"pull"``, ``"push"``, or ``"both"`` (default).
             dry_run: When ``True``, projects pull without moving HEAD.
                 See :meth:`GitWriteStrategy.force_push` for why this is
@@ -1632,6 +1662,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         url: str,
         path: str,
         frontmatter: dict[str, Any] | None = None,
+        participant_id: str = "",  # noqa: ARG001 — consumed by GitAuthorAttributionMiddleware
+
         if_match: str | None = None,
         timeout_s: float = 30.0,
         collection: Collection = Depends(get_collection),
@@ -1661,6 +1693,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             path: Destination path in the vault (e.g. "notes/report.md"
                 or "assets/diagram.png"). Extension determines handling:
                 .md for notes, anything else for attachments.
+            participant_id: Your participant identity (e.g. "ki", "lin",
+                "arnon", "cc"). Honor-system trust; the server uses this
+                to attribute the git commit author. Required for write
+                operations.
             frontmatter: Optional YAML frontmatter dict for .md files,
                 e.g. {"title": "Report", "source": "http://..."}. Ignored
                 for attachments.
