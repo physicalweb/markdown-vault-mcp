@@ -266,6 +266,25 @@ def make_server(transport: str = "stdio") -> FastMCP:
         artifact_store = ArtifactStore(ttl_seconds=ARTIFACT_TTL_SECONDS)
         set_artifact_store(artifact_store)
         ArtifactStore.register_route(mcp, artifact_store)
+
+        # GitHub webhook receiver — fork-only, gates on secret presence.
+        # When MARKDOWN_VAULT_MCP_GITHUB_WEBHOOK_SECRET is set, the route is
+        # mounted; otherwise it's not exposed at all. Closes the read-side
+        # staleness gap where the local clone only refreshed on the periodic
+        # pull interval (default 600s). Push events trigger an immediate
+        # force_pull + reindex.
+        if config.github_webhook_secret is not None:
+            from markdown_vault_mcp._github_webhook import make_webhook_handler
+            from markdown_vault_mcp._server_deps import get_collection_singleton
+
+            webhook_handler = make_webhook_handler(
+                collection_getter=get_collection_singleton,
+                secret=config.github_webhook_secret,
+            )
+            mcp.custom_route("/github-webhook", methods=["POST"])(webhook_handler)
+            logger.info(
+                "GitHub webhook receiver mounted at POST /github-webhook"
+            )
     # DOMAIN-WIRING-END
 
     # DOMAIN-FILE-EXCHANGE-START — file-exchange wiring sentinel.  Kept

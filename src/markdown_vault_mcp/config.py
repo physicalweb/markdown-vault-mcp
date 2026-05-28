@@ -183,6 +183,7 @@ class CollectionConfig:
     git_lfs: bool = True
     git_pull_interval_s: int = 600
     git_author_mapping_path: Path | None = None
+    github_webhook_secret: str | None = None
     attachment_extensions: list[str] | None = None
     max_attachment_size_mb: float = 1.0  # MB; 0 = unlimited
     max_note_read_bytes: int = 262144  # 256 KB; 0 = unlimited
@@ -382,6 +383,12 @@ def load_config() -> CollectionConfig:
       init to resolve LFS pointers; default ``true``.
     - ``MARKDOWN_VAULT_MCP_GIT_PULL_INTERVAL_S``: seconds between periodic
       git fetch + ff-only updates (default ``600``). Set to ``0`` to disable.
+    - ``MARKDOWN_VAULT_MCP_GITHUB_WEBHOOK_SECRET``: shared secret for the
+      GitHub webhook receiver at ``POST /github-webhook`` (fork-only feature).
+      When set, the server exposes the route and verifies HMAC-SHA256 of the
+      payload against this secret. When unset, the route is not mounted.
+      Push events trigger an immediate ``git fetch + ff-only`` plus reindex —
+      strictly faster than waiting for the periodic interval above.
 
     **Attachments and templates:**
 
@@ -574,6 +581,13 @@ def load_config() -> CollectionConfig:
         Path(raw_git_author_mapping) if raw_git_author_mapping else None
     )
     logger.debug("load_config: git_author_mapping_path=%s", git_author_mapping_path)
+
+    raw_webhook_secret = (_env("GITHUB_WEBHOOK_SECRET") or "").strip()
+    github_webhook_secret: str | None = raw_webhook_secret or None
+    logger.debug(
+        "load_config: github_webhook_secret=%s",
+        "<set>" if github_webhook_secret else "<unset>",
+    )
 
     raw_attachment_extensions = (_env("ATTACHMENT_EXTENSIONS") or "").strip()
     attachment_extensions: list[str] | None
@@ -846,6 +860,7 @@ def load_config() -> CollectionConfig:
         git_lfs=git_lfs,
         git_pull_interval_s=git_pull_interval_s,
         git_author_mapping_path=git_author_mapping_path,
+        github_webhook_secret=github_webhook_secret,
         attachment_extensions=attachment_extensions,
         max_attachment_size_mb=max_attachment_size_mb,
         max_note_read_bytes=max_note_read_bytes,
