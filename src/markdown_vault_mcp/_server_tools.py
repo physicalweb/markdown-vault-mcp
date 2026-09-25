@@ -381,11 +381,13 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             path: Relative path to the document or attachment
                 (e.g. "Journal/note.md" or "assets/diagram.pdf").
                 Case-sensitive.
-            section: When provided, return only the section whose heading
-                matches *section* exactly (case-sensitive). Pass the ``heading``
-                value from a ``search`` result unchanged for guaranteed match.
-                ``None`` (the default) returns the whole document.
-                Ignored for non-.md paths.
+            section: When provided, return the WHOLE section whose heading
+                matches *section* exactly (case-sensitive) — all of it, not
+                only the first indexed chunk; if the read cap cuts it, the
+                text ends with a line saying how much was left and how to
+                get it. Pass the ``heading`` value from a ``search`` result
+                unchanged for guaranteed match. ``None`` (the default)
+                returns the whole document. Ignored for non-.md paths.
 
         Returns:
             For .md: dict with path, title, folder, content (markdown body
@@ -1273,8 +1275,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 "assets/photo.png"). Extension determines handling.
             participant_id: Your participant identity (e.g. "ki", "lin",
                 "arnon", "cc"). Honor-system trust; the server uses this
-                to attribute the git commit author. Required for write
-                operations.
+                to attribute the git commit author. Optional in the schema:
+                when omitted, the commit is attributed to the caller's
+                Auth0 subject, or — for a service-token caller such as the
+                Agora daemon — to the shared service identity, not to you.
             content: Full markdown body for .md files (excluding
                 frontmatter). Ignored for attachments.
             frontmatter: Optional YAML frontmatter dict for .md files,
@@ -1368,8 +1372,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             path: Relative path to the document.
             participant_id: Your participant identity (e.g. "ki", "lin",
                 "arnon", "cc"). Honor-system trust; the server uses this
-                to attribute the git commit author. Required for write
-                operations.
+                to attribute the git commit author. Optional in the schema:
+                when omitted, the commit is attributed to the caller's
+                Auth0 subject, or — for a service-token caller such as the
+                Agora daemon — to the shared service identity, not to you.
             old_text: Text to replace. Must appear exactly once in the
                 document or line range. Get this via 'read'. Optional
                 when using line-range mode.
@@ -1444,8 +1450,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             path: Relative path to the document or attachment to delete.
             participant_id: Your participant identity (e.g. "ki", "lin",
                 "arnon", "cc"). Honor-system trust; the server uses this
-                to attribute the git commit author. Required for write
-                operations.
+                to attribute the git commit author. Optional in the schema:
+                when omitted, the commit is attributed to the caller's
+                Auth0 subject, or — for a service-token caller such as the
+                Agora daemon — to the shared service identity, not to you.
             if_match: Optional etag obtained from a previous 'read' call.
                 When provided, the deletion only proceeds if the file has
                 not been modified since that read (optimistic concurrency).
@@ -1499,8 +1507,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 or "assets/new.png"). Fails if new_path already exists.
             participant_id: Your participant identity (e.g. "ki", "lin",
                 "arnon", "cc"). Honor-system trust; the server uses this
-                to attribute the git commit author. Required for write
-                operations.
+                to attribute the git commit author. Optional in the schema:
+                when omitted, the commit is attributed to the caller's
+                Auth0 subject, or — for a service-token caller such as the
+                Agora daemon — to the shared service identity, not to you.
             if_match: Optional etag obtained from a previous 'read' call
                 for old_path. When provided, the rename only proceeds if
                 the file has not been modified since that read (optimistic
@@ -1695,8 +1705,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 .md for notes, anything else for attachments.
             participant_id: Your participant identity (e.g. "ki", "lin",
                 "arnon", "cc"). Honor-system trust; the server uses this
-                to attribute the git commit author. Required for write
-                operations.
+                to attribute the git commit author. Optional in the schema:
+                when omitted, the commit is attributed to the caller's
+                Auth0 subject, or — for a service-token caller such as the
+                Agora daemon — to the shared service identity, not to you.
             frontmatter: Optional YAML frontmatter dict for .md files,
                 e.g. {"title": "Report", "source": "http://..."}. Ignored
                 for attachments.
