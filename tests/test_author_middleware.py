@@ -177,6 +177,40 @@ def test_participant_id_wins_over_auth0_subject(
         assert observed["author"] == ("Ki", "ki@personas.agora.local")
 
 
+def test_seat_spelling_resolves_to_the_persona(
+    mw: GitAuthorAttributionMiddleware,
+) -> None:
+    """``<persona>:<role>`` maps to the persona's entry (2026-09-25).
+
+    Agora files a persona's acts under the seat id (``lin:partner``); a persona
+    passing that id here minted commits authored to the default identity
+    because the map is keyed by the bare id — 12 of Lín's 13 deposits.
+    """
+    ctx = _make_context({"participant_id": "ki:partner", "path": "x.md"})
+    with patch(
+        "markdown_vault_mcp._author_middleware.get_access_token",
+        return_value=None,
+    ):
+        observed: dict[str, tuple[str, str] | None] = {}
+
+        async def call_next(_context: Any) -> str:
+            observed["author"] = _author_context.get_author()
+            return "ok"
+
+        import asyncio
+
+        asyncio.run(mw.on_call_tool(ctx, call_next))
+        assert observed["author"] == ("Ki", "ki@personas.agora.local")
+
+
+def test_unknown_persona_with_role_suffix_does_not_resolve(
+    mw: GitAuthorAttributionMiddleware,
+) -> None:
+    """A suffixed id whose bare persona is not mapped still falls through."""
+    assert mw._resolve_by_participant("nobody:partner") is None
+    assert mw._resolve_by_participant(":partner") is None
+
+
 def test_auth0_subject_used_when_no_participant_id(
     mw: GitAuthorAttributionMiddleware,
 ) -> None:

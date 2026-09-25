@@ -194,10 +194,24 @@ class GitAuthorAttributionMiddleware(Middleware):
         )
 
     def _resolve_by_participant(self, participant_id: str | None) -> _Identity | None:
-        """Honor-system lookup by ``participant_id`` claim. No auth check."""
+        """Honor-system lookup by ``participant_id`` claim. No auth check.
+
+        A seat spelling — ``<persona>:<role>``, e.g. ``lin:partner`` — resolves
+        to the persona's entry (2026-09-25): Agora's daemon files a persona's
+        acts under the seat id, and a persona who passes that id here was
+        minting commits authored to the default identity because the map is
+        keyed by the bare id (12 of Lín's 13 deposits). An exact key still
+        wins when one exists, so a mapping may name a role explicitly.
+        """
         if not isinstance(participant_id, str):
             return None
-        return self._by_participant.get(participant_id)
+        exact = self._by_participant.get(participant_id)
+        if exact is not None:
+            return exact
+        bare, sep, _role = participant_id.partition(":")
+        if sep and bare:
+            return self._by_participant.get(bare)
+        return None
 
     def _resolve_by_subject(self) -> _Identity | None:
         """Auth0-backed lookup by OIDC ``sub`` claim."""
