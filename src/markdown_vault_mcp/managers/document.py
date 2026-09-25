@@ -231,9 +231,11 @@ class DocumentManager:
 
         Args:
             path: Relative document path (e.g. ``"Journal/note.md"``).
-            section: When provided, return only the chunk whose heading
-                matches *section* exactly. ``None`` returns the whole
-                document (today's behaviour).
+            section: When provided, return the whole section whose heading
+                matches *section* exactly — every chunk the indexer split it
+                into, in order; a cut forced by the read cap is announced in
+                the returned text (AGO-560). ``None`` returns the whole
+                document.
 
         Returns:
             A :class:`~markdown_vault_mcp.types.NoteContent`, or ``None`` if
@@ -309,6 +311,23 @@ class DocumentManager:
             etag=etag,
         )
 
+    def _continuations(self, path: str, rest: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Of the same-heading chunks after the first, return the leading run that starts on body lines."""
+        import re
+
+        try:
+            lines = (self._source_dir / path).read_text(encoding="utf-8").splitlines()
+        except OSError:
+            return []
+        out: list[dict[str, Any]] = []
+        for c in rest:
+            i = c.get("start_line")
+            line = lines[i] if isinstance(i, int) and 0 <= i < len(lines) else "#"
+            if re.match(r"^#{1,6}\s", line):
+                break
+            out.append(c)
+        return out
+
     def _read_section(self, path: str, heading: str) -> NoteContent:
         """Return a NoteContent containing only the named section's chunk.
 
@@ -336,7 +355,13 @@ class DocumentManager:
                 f"Section '{heading}' not found in document {path}: "
                 "document is not indexed or does not exist"
             )
-        section_row = self._fts.get_section(path, heading)
+        chunks = self._fts.get_section_chunks(path, heading)
+        section_row = chunks[0] if chunks else None
+        if section_row is not None and len(chunks) > 1:
+            # Keep only the chunks that CONTINUE the first section: a chunk starting on a heading line
+            # is a new section that repeats the title (first-occurrence semantics stay), a chunk starting
+            # on a body line is the chunker's split of the same section (AGO-560).
+            chunks = [chunks[0]] + [c for c in self._continuations(path, chunks[1:])]
         if section_row is None:
             # Miss path only — fires a second SELECT over the same rows
             # get_section already fetched. Acceptable because the miss
@@ -358,11 +383,30 @@ class DocumentManager:
         if folder == ".":
             folder = ""
 
+        # AGO-560 (2026-09-25): a section longer than the chunker's max_chunk_words is several chunks
+        # sharing the heading; serve them ALL, in order — and if the read cap forces a cut, say so in
+        # the text, the way the folds, the seam line and ground_read announce theirs.
+        cap = self._max_note_read_bytes if self._max_note_read_bytes > 0 else None
+        parts: list[str] = []
+        used = 0
+        for k, ch in enumerate(chunks):
+            piece = ch["content"]
+            if cap is not None and k > 0 and used + len(piece.encode("utf-8")) + 2 > cap:
+                rest = chunks[k:]
+                rest_bytes = sum(len(c["content"].encode("utf-8")) for c in rest)
+                parts.append(
+                    f"[section {heading!r} continues: {len(rest)} more chunk(s), ~{rest_bytes} bytes not returned "
+                    f"— MARKDOWN_VAULT_MCP_MAX_NOTE_READ_BYTES ({cap}) cut it here; read({path!r}) for the whole "
+                    f"document, or raise the cap]"
+                )
+                break
+            parts.append(piece)
+            used += len(piece.encode("utf-8")) + 2
         return NoteContent(
             path=path,
             title=doc_row["title"],
             folder=folder,
-            content=section_row["content"],
+            content="\n\n".join(parts),
             frontmatter={},  # section reads do not synthesise frontmatter
             modified_at=doc_row["modified_at"],
             etag="",  # ETag is whole-file; not meaningful for a section

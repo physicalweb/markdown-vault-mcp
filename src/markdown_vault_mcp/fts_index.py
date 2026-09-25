@@ -1432,6 +1432,45 @@ class FTSIndex:
                 }
         return None
 
+    def get_section_chunks(self, path: str, heading: str) -> list[dict[str, Any]]:
+        """Return the chunks of the FIRST section titled *heading*, in document order.
+
+        A section longer than the chunker's ``max_chunk_words`` is stored as
+        several contiguous chunks that share the heading; :meth:`get_section`
+        returns only the first of them, which served long sections cut with nothing to say
+        (AGO-560, 2026-09-25 — the docs connector's ``read(section=)`` was the
+        one route in a persona's frame that cut silently). Whitespace in the
+        heading is collapsed on both sides as in :meth:`get_section`.
+
+        Returns:
+            A list (possibly empty) of dicts with ``content``, ``heading``,
+            ``heading_level``, ordered by ``start_line``.
+        """
+        norm_query = _normalize_heading(heading)
+        if not norm_query:
+            return []
+        rows = self._conn.execute(
+            """
+            SELECT s.content, s.heading, s.heading_level, s.start_line
+            FROM sections s
+            JOIN documents d ON d.id = s.document_id
+            WHERE d.path = ? AND s.heading IS NOT NULL
+            ORDER BY s.start_line ASC
+            """,
+            (path,),
+        ).fetchall()
+        # The contiguous run of same-heading rows starting at the FIRST match. The table cannot tell a
+        # continuation chunk from a later section that repeats the title (both share heading, level and
+        # adjacency), so the caller separates them by the source: a section's first chunk starts on its
+        # heading line, a continuation chunk does not (``start_line`` is returned for that).
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if _normalize_heading(row["heading"]) == norm_query:
+                out.append({"content": row["content"], "heading": row["heading"], "heading_level": row["heading_level"], "start_line": row["start_line"]})
+            elif out:
+                break
+        return out
+
     def list_section_headings(self, path: str, *, limit: int = 50) -> list[str]:
         """Return up to *limit* section headings for *path*, in document order.
 

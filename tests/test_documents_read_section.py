@@ -167,3 +167,59 @@ def test_read_section_duplicate_heading_returns_first_by_start_line(tmp_path):
     assert nc is not None
     assert "first occurrence body" in nc.content
     assert "second occurrence body" not in nc.content
+
+
+# ---------------------------------------------------------------------------
+# AGO-560 (2026-09-25): a long section is several chunks; read(section=) serves them all
+# ---------------------------------------------------------------------------
+
+
+def _long_doc_mgr(tmp_path, *, max_note_read_bytes: int = 0):
+    a = tmp_path / "long.md"
+    long_words = "\n".join(f"w{i}" for i in range(400))  # 400 words on 400 lines: clears the short-doc bypass, splits at max_chunk_words=50
+    body = (
+        "# Long\n" + "\n".join(["intro"] * 12) + "\n## Big Section\n" + long_words + "\nLAST-WORD-OF-SECTION\n"
+        "## After\n" + "\n".join(["after body"] * 12) + "\n"
+    )
+    a.write_text(body, encoding="utf-8")
+    fts = FTSIndex(db_path=":memory:")
+    chunker = HeadingChunker(max_chunk_words=50)
+    for note in scan_directory(tmp_path, chunk_strategy=chunker):
+        fts.upsert_note(note)
+    kwargs = {}
+    if max_note_read_bytes:
+        kwargs["max_note_read_bytes"] = max_note_read_bytes
+    return fts, DocumentManager(
+        fts=fts,
+        source_dir=tmp_path,
+        write_lock=threading.RLock(),
+        chunk_strategy=chunker,
+        read_only=False,
+        **kwargs,
+    )
+
+
+def test_long_section_is_stored_as_several_chunks(tmp_path):
+    fts, _ = _long_doc_mgr(tmp_path)
+    chunks = fts.get_section_chunks("long.md", "Big Section")
+    assert len(chunks) > 1, "the fixture must split the section, or the test proves nothing"
+    assert fts.get_section("long.md", "Big Section")["content"] == chunks[0]["content"]
+
+
+def test_read_section_returns_the_whole_section_not_its_first_chunk(tmp_path):
+    _, mgr = _long_doc_mgr(tmp_path)
+    nc = mgr.read("long.md", section="Big Section")
+    assert nc is not None
+    assert "w0 " in nc.content or nc.content.startswith("w0")
+    assert "LAST-WORD-OF-SECTION" in nc.content, "the section's tail was cut silently (AGO-560)"
+    assert "after body" not in nc.content
+    assert "continues:" not in nc.content
+
+
+def test_read_section_announces_a_cut_when_the_cap_binds(tmp_path):
+    _, mgr = _long_doc_mgr(tmp_path, max_note_read_bytes=600)
+    nc = mgr.read("long.md", section="Big Section")
+    assert nc is not None
+    assert "LAST-WORD-OF-SECTION" not in nc.content
+    assert "[section 'Big Section' continues:" in nc.content
+    assert "read('long.md')" in nc.content
