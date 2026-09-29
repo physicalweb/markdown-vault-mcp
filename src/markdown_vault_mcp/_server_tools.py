@@ -26,6 +26,8 @@ from markdown_vault_mcp.git import GitWriteStrategy, PullResult, PushResult
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from markdown_vault_mcp.types import ReindexResult
+
 from ._icons import _TOOL_ICONS
 from ._server_deps import get_collection
 
@@ -176,15 +178,20 @@ async def _reindex_after_pull(
     the index is stale and can decide whether to retry via the
     ``reindex`` tool.
 
+    The embedding leg is decoupled inside ``reindex()`` itself (AGO-576):
+    a provider failure never raises here, so the FTS index is fresh and
+    the affected paths surface as ``embeddings_failed`` on the pull
+    payload instead.
+
     Mutates ``pull_dict`` in place on failure.
     """
 
-    def _pause_and_reindex() -> None:
+    def _pause_and_reindex() -> ReindexResult:
         with collection.pause_writes():
-            collection.reindex()
+            return collection.reindex()
 
     try:
-        await asyncio.to_thread(_pause_and_reindex)
+        reindex_result = await asyncio.to_thread(_pause_and_reindex)
     except Exception:
         logger.exception(
             "git_sync: reindex after pull failed — FTS index "
@@ -196,6 +203,15 @@ async def _reindex_after_pull(
             "refreshed.  search / list_documents / get_context "
             "will serve stale data until the next call to the "
             "reindex tool or the next write."
+        )
+        return
+    if reindex_result.embeddings_failed:
+        pull_dict["embeddings_failed"] = list(reindex_result.embeddings_failed)
+        pull_dict["embeddings_hint"] = (
+            "Pull and full-text reindex succeeded, but these documents "
+            "could not be re-embedded; semantic search will not see their "
+            "new content until build_embeddings or the next reindex that "
+            "touches them."
         )
 
 
@@ -1203,7 +1219,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         model), use 'build_embeddings' with force=True instead.
 
         Returns:
-            Dict with counts: added, modified, deleted, unchanged.
+            Dict with counts: added, modified, deleted, unchanged; and
+            embeddings_failed, the paths whose full-text entry was refreshed
+            but whose vectors could not be re-embedded (empty when all
+            embedded).
         """
         result = await asyncio.to_thread(collection.reindex)
         return asdict(result)

@@ -302,12 +302,17 @@ class ReindexResult:
         modified: Documents that changed since the last index.
         deleted: Documents removed since the last index.
         unchanged: Documents with no changes.
+        embeddings_failed: Paths whose full-text entry was refreshed but
+            whose vectors could not be re-embedded (provider error or a
+            document over the per-request token cap).  Full-text search
+            and listings are current for these; semantic search is not.
     """
 
     added: int
     modified: int
     deleted: int
     unchanged: int
+    embeddings_failed: list[str] = field(default_factory=list)
 
 
 @dataclass

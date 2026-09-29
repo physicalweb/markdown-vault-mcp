@@ -98,8 +98,10 @@ async def _trigger_pull_and_reindex(collection: Collection) -> dict[str, Any]:
     }
     if head_moved:
         try:
-            await asyncio.to_thread(collection.reindex)
+            reindex_result = await asyncio.to_thread(collection.reindex)
             payload["reindexed"] = True
+            if reindex_result.embeddings_failed:
+                payload["embeddings_failed"] = list(reindex_result.embeddings_failed)
         except Exception as e:  # pragma: no cover — defensive
             logger.exception("github_webhook: reindex failed: %s", e)
             payload["reindexed"] = False

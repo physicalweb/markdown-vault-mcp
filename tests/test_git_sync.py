@@ -371,6 +371,73 @@ class TestGitSync:
         # The seeded file landed on disk despite the reindex blow-up.
         assert (git_repo_pair.local_path / "reindex_seed.md").exists()
 
+    async def test_pull_with_failing_embedder_still_refreshes_fts(
+        self,
+        git_repo_pair: GitRepoPair,
+        _git_managed_env: Path,
+        tmp_path: Path,
+    ) -> None:
+        """A pull whose re-embed fails must still refresh search / list_documents.
+
+        Regression for AGO-576: the post-pull reindex re-embedded the pulled
+        documents and the provider refused the request (``400: Requested
+        547830 tokens, max 300000 tokens per request``); the whole reindex
+        failed and full-text search served stale data while path reads were
+        fresh.  The embedding leg is now decoupled: FTS lands, the pull
+        payload carries ``embeddings_failed`` naming the documents, and
+        ``reindex_failed`` is absent.
+
+        Embeddings are wired onto the live Collection after the lifespan
+        built it (the same singleton seam the reindex-failure test uses),
+        with a provider that always refuses.
+        """
+        pytest.importorskip("numpy")
+        from markdown_vault_mcp.vector_index import VectorIndex
+        from tests.conftest import MockEmbeddingProvider
+
+        class _Refusing(MockEmbeddingProvider):
+            def embed(self, texts):  # noqa: ARG002 — always refuses
+                raise RuntimeError(
+                    "OpenAI API error 400: Requested 547830 tokens, "
+                    "max 300000 tokens per request"
+                )
+
+        _seed_remote_commit(
+            git_repo_pair,
+            clone_name="clone_embed_fail",
+            file_name="pulled_zebra.md",
+            body="# Pulled\n\nThe quokka zebra sentence.\n",
+        )
+
+        server = make_server()
+        async with Client(server) as client:
+            collection = _server_deps.get_collection_singleton()
+            provider = _Refusing()
+            collection._index_mgr._embedding_provider = provider
+            collection._index_mgr._embeddings_path = tmp_path / "embeddings"
+            collection._vectors = VectorIndex(provider)
+
+            result = await client.call_tool("git_sync", {"direction": "pull"})
+            payload = _parse_tool_data(result)
+
+            listed = _parse_tool_data(await client.call_tool("list_documents", {}))
+            found = _parse_tool_data(
+                await client.call_tool("search", {"query": "quokka"})
+            )
+
+        assert payload["pull"]["applied"] is True, payload["pull"]
+        assert "reindex_failed" not in payload["pull"], payload["pull"]
+        assert payload["pull"]["embeddings_failed"] == ["pulled_zebra.md"], payload[
+            "pull"
+        ]
+        assert "embeddings_hint" in payload["pull"]
+        # Full-text surfaces are current for the pulled document.  A list
+        # return arrives either bare or wrapped as ``{"result": [...]}``.
+        listed = listed if isinstance(listed, list) else listed["result"]
+        found = found if isinstance(found, list) else found["result"]
+        assert "pulled_zebra.md" in {d["path"] for d in listed}, listed
+        assert "pulled_zebra.md" in json.dumps(found), found
+
     async def test_both_direction_skips_push_when_pull_fails(
         self,
         git_repo_pair: GitRepoPair,

@@ -296,9 +296,15 @@ class IndexManager:
         lock to prevent races with concurrent write/edit/delete/rename
         operations.
 
+        The full-text index is refreshed independently of embeddings: a
+        provider failure while re-embedding one document is recorded in
+        ``embeddings_failed`` (its stale vectors are dropped) and never
+        aborts the reindex, so ``search`` / ``list_documents`` are current
+        after a pull even when the embedding leg is down (AGO-576).
+
         Returns:
             :class:`~markdown_vault_mcp.types.ReindexResult` with counts
-            of changes applied.
+            of changes applied and the paths whose embeddings failed.
         """
         # Phase 1: scan (outside lock — read-only filesystem walk + hashing).
         changes = self._tracker.detect_changes(self._source_dir)
@@ -380,6 +386,7 @@ class IndexManager:
 
             indexed_added = 0
             indexed_modified = 0
+            embeddings_failed: list[str] = []
             added_set = set(changes.added)
 
             for path, note in parsed:
@@ -408,10 +415,24 @@ class IndexManager:
                         for c in note.chunks
                     ]
                     if texts:
-                        vectors.add(texts, meta)
+                        try:
+                            vectors.add(texts, meta)
+                        except Exception as exc:
+                            # FTS for this note is already fresh; only its
+                            # vectors are missing.  Never abort the reindex.
+                            logger.warning(
+                                "reindex: embedding failed for %s — %s", path, exc
+                            )
+                            embeddings_failed.append(path)
 
             if vectors is not None and self._embeddings_path is not None:
-                vectors.save(self._embeddings_path)
+                try:
+                    vectors.save(self._embeddings_path)
+                except Exception:
+                    logger.exception(
+                        "reindex: could not save the vector index to %s",
+                        self._embeddings_path,
+                    )
 
             # Re-resolve vault-wide wikilinks.
             self._fts.resolve_vault_wikilinks()
@@ -430,11 +451,19 @@ class IndexManager:
             ]
             self._tracker.update_state(state_notes)
 
+        if embeddings_failed:
+            logger.warning(
+                "reindex: full-text index refreshed but %d document(s) could not "
+                "be re-embedded: %s",
+                len(embeddings_failed),
+                embeddings_failed,
+            )
         return ReindexResult(
             added=indexed_added,
             modified=indexed_modified,
             deleted=len(changes.deleted),
             unchanged=changes.unchanged,
+            embeddings_failed=embeddings_failed,
         )
 
     # ------------------------------------------------------------------

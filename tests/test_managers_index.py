@@ -228,6 +228,95 @@ class TestReindex:
         assert result.modified >= 1
 
 
+class TestReindexEmbeddingsDecoupled:
+    """The FTS refresh must land even when the embedding leg fails (AGO-576)."""
+
+    @staticmethod
+    def _mgr_with_vectors(index_vault: Path, tmp_path: Path, provider):
+        pytest.importorskip("numpy")
+        from markdown_vault_mcp.vector_index import VectorIndex
+
+        mgr, fts, holder = _make_index_mgr(
+            index_vault,
+            tmp_path,
+            embeddings_path=tmp_path / "embeddings",
+            embedding_provider=provider,
+        )
+        mgr.build_index()
+        holder["vectors"] = VectorIndex(provider)
+        return mgr, fts, holder
+
+    def test_provider_error_leaves_fts_fresh_and_names_the_path(
+        self, index_vault: Path, tmp_path: Path
+    ):
+        from tests.conftest import MockEmbeddingProvider
+
+        class _Throwing(MockEmbeddingProvider):
+            def embed(self, texts):  # noqa: ARG002 — always refuses
+                raise RuntimeError(
+                    "OpenAI API error 400: Requested 547830 tokens, "
+                    "max 300000 tokens per request"
+                )
+
+        mgr, fts, holder = self._mgr_with_vectors(index_vault, tmp_path, _Throwing())
+
+        (index_vault / "alpha.md").write_text(
+            "---\ntitle: Alpha\n---\n# Alpha\n\nFreshly pulled zebra text.\n",
+            encoding="utf-8",
+        )
+        (index_vault / "pulled.md").write_text(
+            "---\ntitle: Pulled\n---\n# Pulled\n\nAlso new.\n", encoding="utf-8"
+        )
+
+        result = mgr.reindex()  # must not raise
+
+        assert result.modified == 1 and result.added == 1
+        assert sorted(result.embeddings_failed) == ["alpha.md", "pulled.md"]
+        # Full-text index is current for both documents...
+        paths = {n["path"] for n in fts.list_notes()}
+        assert "pulled.md" in paths
+        assert any("zebra" in r.content for r in fts.search("zebra"))
+        # ...the tracker moved on (a second reindex sees nothing to do)...
+        again = mgr.reindex()
+        assert (again.added, again.modified, again.embeddings_failed) == (0, 0, [])
+        # ...and the failed documents simply have no vectors.
+        assert holder["vectors"].count == 0
+
+    def test_one_oversized_document_fails_alone(
+        self, index_vault: Path, tmp_path: Path
+    ):
+        from tests.conftest import MockEmbeddingProvider
+
+        class _Capped(MockEmbeddingProvider):
+            """Refuse a single text over 100 estimated tokens (400 chars)."""
+
+            def embed(self, texts):
+                if any(len(t) > 400 for t in texts):
+                    raise RuntimeError(
+                        "OpenAI API error 400: Requested 9999 tokens, "
+                        "max 100 tokens per request"
+                    )
+                return super().embed(texts)
+
+        mgr, fts, holder = self._mgr_with_vectors(index_vault, tmp_path, _Capped())
+
+        (index_vault / "huge.md").write_text(
+            "---\ntitle: Huge\n---\n# Huge\n\n" + "word " * 500 + "\n",
+            encoding="utf-8",
+        )
+        (index_vault / "small.md").write_text(
+            "---\ntitle: Small\n---\n# Small\n\nSmall body.\n", encoding="utf-8"
+        )
+
+        result = mgr.reindex()
+
+        assert result.added == 2
+        assert result.embeddings_failed == ["huge.md"]
+        assert {n["path"] for n in fts.list_notes()} >= {"huge.md", "small.md"}
+        vec_paths = {m["path"] for m in holder["vectors"]._metadata}
+        assert "small.md" in vec_paths and "huge.md" not in vec_paths
+
+
 # ---------------------------------------------------------------------------
 # build_embeddings
 # ---------------------------------------------------------------------------
