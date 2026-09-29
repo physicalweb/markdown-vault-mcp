@@ -6,6 +6,11 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from markdown_vault_mcp.providers import (
+    EmbeddingRequestTooLargeError,
+    embed_in_token_batches,
+)
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -155,7 +160,9 @@ class VectorIndex:
         queries can use a plain dot product.
 
         If the provider raises during embedding, no state is modified —
-        the index remains exactly as it was before the call.
+        the index remains exactly as it was before the call.  Texts are
+        sent in requests that stay under the provider's per-request token
+        budget (see :func:`~markdown_vault_mcp.providers.embed_in_token_batches`).
 
         Args:
             texts: Texts to embed.  Length must equal ``len(metadata)``.
@@ -171,6 +178,9 @@ class VectorIndex:
             ValueError: If ``len(texts) != len(metadata)``, ``texts`` is
                 empty, or the new vectors' dimension does not match the
                 dimension of vectors already stored in the index.
+            EmbeddingRequestTooLargeError: If one text exceeds the
+                provider's per-request token cap on its own; ``.path`` names
+                the document it came from.
             RuntimeError: Propagated from the embedding provider.
         """
         if len(texts) != len(metadata):
@@ -182,7 +192,12 @@ class VectorIndex:
             return 0
 
         # Embed first — do NOT mutate state until this succeeds.
-        raw: list[list[float]] = self._provider.embed(texts)
+        try:
+            raw: list[list[float]] = embed_in_token_batches(self._provider, texts)
+        except EmbeddingRequestTooLargeError as exc:
+            raise EmbeddingRequestTooLargeError(
+                exc.index, exc.__cause__ or exc, path=metadata[exc.index].get("path")
+            ) from exc
         return self.add_vectors(raw, metadata)
 
     def add_vectors(self, raw_vectors: list[list[float]], metadata: list[dict]) -> int:

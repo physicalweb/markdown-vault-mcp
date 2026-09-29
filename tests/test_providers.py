@@ -9,10 +9,16 @@ import pytest
 
 from markdown_vault_mcp.config import CollectionConfig
 from markdown_vault_mcp.providers import (
+    DEFAULT_MAX_TOKENS_PER_REQUEST,
+    EmbeddingProvider,
+    EmbeddingRequestTooLargeError,
     FastEmbedProvider,
     OllamaProvider,
     OpenAIProvider,
+    embed_in_token_batches,
+    estimate_tokens,
     get_embedding_provider,
+    is_token_cap_error,
 )
 
 
@@ -432,3 +438,163 @@ class TestGetEmbeddingProvider:
             pytest.raises(RuntimeError, match="No embedding provider"),
         ):
             get_embedding_provider(cfg)
+
+
+# ---------------------------------------------------------------------------
+# Token-budgeted batching (AGO-576)
+# ---------------------------------------------------------------------------
+
+
+class _CappedProvider(EmbeddingProvider):
+    """Fake provider that refuses any request over ``cap`` estimated tokens.
+
+    Mimics OpenAI's ``400: Requested N tokens, max M tokens per request``
+    so the halve-and-retry path is exercised end to end.  Records every
+    batch it was asked for in ``calls``.
+    """
+
+    def __init__(self, cap: int, *, dim: int = 4) -> None:
+        self.cap = cap
+        self._dim = dim
+        self.calls: list[list[str]] = []
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.calls.append(list(texts))
+        requested = sum(estimate_tokens(t) for t in texts)
+        if requested > self.cap:
+            raise RuntimeError(
+                f"OpenAI API error 400: Requested {requested} tokens, "
+                f"max {self.cap} tokens per request"
+            )
+        return [[float(len(t))] * self._dim for t in texts]
+
+    @property
+    def dimension(self) -> int:
+        return self._dim
+
+    @property
+    def provider_name(self) -> str:
+        return "capped"
+
+    @property
+    def model_name(self) -> str:
+        return "capped-test"
+
+
+class TestEstimateTokens:
+    def test_ascii_is_chars_over_four(self) -> None:
+        assert estimate_tokens("a" * 400) == 100
+
+    def test_non_ascii_counts_one_per_char(self) -> None:
+        assert estimate_tokens("日本語" * 10) == 30
+
+    def test_empty_is_zero_and_short_is_at_least_one(self) -> None:
+        assert estimate_tokens("") == 0
+        assert estimate_tokens("ab") == 1
+
+
+class TestIsTokenCapError:
+    def test_openai_shape_matches(self) -> None:
+        exc = RuntimeError(
+            "OpenAI API error 400: Requested 547830 tokens, "
+            "max 300000 tokens per request"
+        )
+        assert is_token_cap_error(exc)
+
+    def test_other_errors_do_not_match(self) -> None:
+        assert not is_token_cap_error(RuntimeError("OpenAI API error 500: boom"))
+        assert not is_token_cap_error(RuntimeError("connection refused"))
+        assert not is_token_cap_error(RuntimeError("401: invalid api token"[:3]))
+
+
+class TestEmbedInTokenBatches:
+    def test_splits_under_budget_and_preserves_order(self) -> None:
+        provider = _CappedProvider(cap=10_000)
+        # 50 texts x 100 tokens = 5000 tokens; a 1000-token budget -> 5 requests.
+        texts = [chr(ord("a") + (i % 26)) * 400 for i in range(50)]
+        out = embed_in_token_batches(provider, texts, max_tokens_per_request=1000)
+        assert len(out) == 50
+        assert [len(c) for c in provider.calls] == [10] * 5
+        # Order preserved: the fake encodes len(text) into the vector.
+        assert [v[0] for v in out] == [float(len(t)) for t in texts]
+
+    def test_halves_and_retries_when_estimate_undershoots(self) -> None:
+        # Budget says 4000 fits, but the provider's cap is 1500 — the first
+        # request is refused and must be halved until it fits.
+        provider = _CappedProvider(cap=1500)
+        texts = ["x" * 400] * 40  # 40 x 100 tokens = 4000
+        out = embed_in_token_batches(provider, texts, max_tokens_per_request=4000)
+        assert len(out) == 40
+        # Refused at 40 and 20, accepted at 10 (1000 tokens) — the whole
+        # reindex never fails, and nothing is re-sent once accepted.
+        assert [len(c) for c in provider.calls] == [40, 20, 10, 10, 20, 10, 10]
+
+    def test_single_oversized_text_fails_alone_with_index(self) -> None:
+        provider = _CappedProvider(cap=1000)
+        texts = ["small", "y" * 8000, "small too"]  # middle one = 2000 tokens
+        with pytest.raises(EmbeddingRequestTooLargeError) as info:
+            embed_in_token_batches(provider, texts, max_tokens_per_request=500)
+        assert info.value.index == 1
+        assert "text #1" in str(info.value)
+
+    def test_non_token_errors_propagate_unchanged(self) -> None:
+        provider = MagicMock(spec=EmbeddingProvider)
+        provider.max_tokens_per_request = 1000
+        provider.embed.side_effect = RuntimeError("OpenAI API error 500: boom")
+        with pytest.raises(RuntimeError, match="500"):
+            embed_in_token_batches(provider, ["a", "b"])
+        assert provider.embed.call_count == 1
+
+    def test_uses_provider_default_budget(self) -> None:
+        provider = _CappedProvider(cap=10**9)
+        provider.max_tokens_per_request = 100
+        texts = ["z" * 200] * 4  # 50 tokens each → 2 per request
+        embed_in_token_batches(provider, texts)
+        assert [len(c) for c in provider.calls] == [2, 2]
+
+    def test_zero_budget_disables_splitting(self) -> None:
+        provider = _CappedProvider(cap=10**9)
+        embed_in_token_batches(provider, ["a" * 4000] * 10, max_tokens_per_request=0)
+        assert len(provider.calls) == 1
+
+    def test_default_budget_is_under_openai_cap(self) -> None:
+        assert 0 < DEFAULT_MAX_TOKENS_PER_REQUEST < 300_000
+        assert OpenAIProvider.max_tokens_per_request == DEFAULT_MAX_TOKENS_PER_REQUEST
+
+    def test_get_embedding_provider_applies_configured_budget(self) -> None:
+        cfg = _config(
+            embedding_provider="openai",
+            openai_api_key="test-key",
+            embedding_max_tokens_per_request=12_345,
+        )
+        provider = get_embedding_provider(cfg)
+        assert provider.max_tokens_per_request == 12_345
+
+
+class TestVectorIndexAddNamesPath:
+    def test_oversized_chunk_error_carries_document_path(self) -> None:
+        pytest.importorskip("numpy")
+        from markdown_vault_mcp.vector_index import VectorIndex
+
+        provider = _CappedProvider(cap=1000)
+        provider.max_tokens_per_request = 500
+        index = VectorIndex(provider)
+        texts = ["ok", "w" * 8000]
+        meta = [{"path": "a.md"}, {"path": "big/lattice.md"}]
+        with pytest.raises(EmbeddingRequestTooLargeError) as info:
+            index.add(texts, meta)
+        assert info.value.path == "big/lattice.md"
+        assert "big/lattice.md" in str(info.value)
+        assert index.count == 0  # nothing mutated on failure
+
+    def test_add_splits_large_document_into_several_requests(self) -> None:
+        pytest.importorskip("numpy")
+        from markdown_vault_mcp.vector_index import VectorIndex
+
+        provider = _CappedProvider(cap=10**9)
+        provider.max_tokens_per_request = 300
+        index = VectorIndex(provider)
+        texts = ["q" * 400] * 6  # 100 tokens each → 3 per request
+        meta = [{"path": "doc.md"}] * 6
+        assert index.add(texts, meta) == 6
+        assert [len(c) for c in provider.calls] == [3, 3]

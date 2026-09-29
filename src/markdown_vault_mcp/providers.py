@@ -13,10 +13,13 @@ available provider based on a :class:`CollectionConfig` instance.
 from __future__ import annotations
 
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from markdown_vault_mcp.config import CollectionConfig
 
 logger = logging.getLogger(__name__)
@@ -28,9 +31,181 @@ logger = logging.getLogger(__name__)
 # may need to reduce this value significantly — see issue #306.
 _FASTEMBED_ONNX_BATCH_SIZE = 32
 
+# Default per-request token budget for bulk embedding.  OpenAI's
+# ``/v1/embeddings`` refuses requests above 300 000 tokens ("Requested
+# 547830 tokens, max 300000 tokens per request", AGO-576); the estimate in
+# :func:`estimate_tokens` is coarse, so the default sits well under the cap.
+DEFAULT_MAX_TOKENS_PER_REQUEST = 200_000
+
+# A provider error that names a token cap looks like a 4xx with "token" in
+# the body (OpenAI: "... 400: Requested N tokens, max M tokens per request").
+_TOKEN_CAP_ERROR_RE = re.compile(r"\b4\d\d\b.*token", re.IGNORECASE | re.DOTALL)
+
+
+def estimate_tokens(text: str) -> int:
+    """Cheap upper-leaning token estimate for request budgeting.
+
+    ASCII text tokenises at roughly four characters per token; anything
+    outside ASCII (CJK, accented letters, symbols) is counted as one token
+    per character, which over-estimates rather than under-estimates.
+
+    Args:
+        text: The string to estimate.
+
+    Returns:
+        Estimated token count, at least 1 for a non-empty string.
+    """
+    if not text:
+        return 0
+    non_ascii = sum(1 for ch in text if ord(ch) > 127)
+    return max(1, (len(text) - non_ascii) // 4 + non_ascii)
+
+
+def is_token_cap_error(exc: BaseException) -> bool:
+    """Return ``True`` when *exc* is a provider refusal naming a token cap.
+
+    Args:
+        exc: The exception raised by :meth:`EmbeddingProvider.embed`.
+    """
+    return _TOKEN_CAP_ERROR_RE.search(str(exc)) is not None
+
+
+class EmbeddingRequestTooLargeError(RuntimeError):
+    """A single text exceeds the provider's per-request token cap on its own.
+
+    Raised by :func:`embed_in_token_batches` once halving has reduced the
+    failing request to one text.  Carries the position of that text so the
+    caller can name the document it came from.
+
+    Attributes:
+        index: Position of the offending text in the ``texts`` list passed
+            to :func:`embed_in_token_batches`.
+        path: Vault path of the document the text came from, when the
+            caller knows it (``None`` otherwise).
+    """
+
+    def __init__(
+        self, index: int, cause: BaseException, *, path: str | None = None
+    ) -> None:
+        self.index = index
+        self.path = path
+        where = f"{path!r}" if path is not None else f"text #{index}"
+        super().__init__(
+            f"Embedding request for {where} exceeds the provider's per-request "
+            f"token cap on its own: {cause}"
+        )
+
+
+def _split_by_token_budget(
+    texts: list[str], budget: int
+) -> Iterator[tuple[int, list[str]]]:
+    """Yield ``(start_index, sub_batch)`` pairs whose estimated tokens fit *budget*.
+
+    A single text above the budget is yielded alone (the estimate may be
+    high, and the provider gets to decide).
+    """
+    start = 0
+    current: list[str] = []
+    current_tokens = 0
+    for i, text in enumerate(texts):
+        tokens = estimate_tokens(text)
+        if current and current_tokens + tokens > budget:
+            yield start, current
+            start = i
+            current = []
+            current_tokens = 0
+        current.append(text)
+        current_tokens += tokens
+    if current:
+        yield start, current
+
+
+def _embed_halving(
+    provider: EmbeddingProvider, texts: list[str], offset: int
+) -> list[list[float]]:
+    """Embed *texts*, halving the batch whenever the provider names a token cap."""
+    try:
+        return provider.embed(texts)
+    except Exception as exc:
+        if not is_token_cap_error(exc):
+            raise
+        if len(texts) == 1:
+            raise EmbeddingRequestTooLargeError(offset, exc) from exc
+        mid = len(texts) // 2
+        logger.warning(
+            "embed: provider refused %d texts on a token cap — retrying as "
+            "%d + %d (%s)",
+            len(texts),
+            mid,
+            len(texts) - mid,
+            exc,
+        )
+        return _embed_halving(provider, texts[:mid], offset) + _embed_halving(
+            provider, texts[mid:], offset + mid
+        )
+
+
+def embed_in_token_batches(
+    provider: EmbeddingProvider,
+    texts: list[str],
+    *,
+    max_tokens_per_request: int | None = None,
+) -> list[list[float]]:
+    """Embed *texts* in requests that stay under a per-request token budget.
+
+    Splits the input greedily by :func:`estimate_tokens` so no single
+    request is expected to exceed the budget, and — because the estimate is
+    coarse — halves and retries any request the provider still refuses on
+    a token cap.  A text the provider refuses on its own raises
+    :class:`EmbeddingRequestTooLargeError` naming its position; every other
+    provider error propagates unchanged.
+
+    Args:
+        provider: The embedding provider to call.
+        texts: Texts to embed, in order.
+        max_tokens_per_request: Token budget per request.  Defaults to
+            ``provider.max_tokens_per_request``.
+
+    Returns:
+        One vector per input text, in input order.
+
+    Raises:
+        EmbeddingRequestTooLargeError: If a single text exceeds the cap.
+        RuntimeError: Propagated from the provider for any other failure.
+    """
+    if not texts:
+        return []
+    budget = (
+        max_tokens_per_request
+        if max_tokens_per_request is not None
+        else provider.max_tokens_per_request
+    )
+    if budget <= 0:
+        return provider.embed(texts)
+    batches = list(_split_by_token_budget(texts, budget))
+    if len(batches) > 1:
+        logger.info(
+            "embed: %d texts split into %d requests under a %d-token budget",
+            len(texts),
+            len(batches),
+            budget,
+        )
+    out: list[list[float]] = []
+    for start, batch in batches:
+        out.extend(_embed_halving(provider, batch, start))
+    return out
+
 
 class EmbeddingProvider(ABC):
-    """Abstract base class for embedding providers."""
+    """Abstract base class for embedding providers.
+
+    Attributes:
+        max_tokens_per_request: Estimated-token budget for a single
+            :meth:`embed` request when called through
+            :func:`embed_in_token_batches`.  ``0`` disables splitting.
+    """
+
+    max_tokens_per_request: int = DEFAULT_MAX_TOKENS_PER_REQUEST
 
     @abstractmethod
     def embed(self, texts: list[str]) -> list[list[float]]:
@@ -426,6 +601,15 @@ def get_embedding_provider(config: CollectionConfig) -> EmbeddingProvider:
         ValueError: If ``config.embedding_provider`` is set to an
             unrecognised value.
     """
+    provider = _select_embedding_provider(config)
+    budget = getattr(config, "embedding_max_tokens_per_request", None)
+    if budget is not None:
+        provider.max_tokens_per_request = int(budget)
+    return provider
+
+
+def _select_embedding_provider(config: CollectionConfig) -> EmbeddingProvider:
+    """Resolve the provider named (or auto-detected) by *config*."""
     explicit = (config.embedding_provider or "").strip().lower()
 
     if explicit == "openai":

@@ -148,6 +148,10 @@ class CollectionConfig:
             API shape.
         openai_embedding_model: OpenAI-compatible embedding model name
             (default ``"text-embedding-3-small"``).
+        embedding_max_tokens_per_request: Estimated-token budget for one
+            embedding request during bulk (re)indexing; larger batches are
+            split (default ``200000``, under OpenAI's 300 000 cap).  ``0``
+            disables splitting.
         fastembed_model: FastEmbed model name (default
             ``"BAAI/bge-small-en-v1.5"``).
         fastembed_cache_dir: Directory for FastEmbed model cache.  ``None``
@@ -215,6 +219,7 @@ class CollectionConfig:
     openai_api_key: str | None = None
     openai_base_url: str = "https://api.openai.com/v1"
     openai_embedding_model: str = "text-embedding-3-small"
+    embedding_max_tokens_per_request: int = 200_000
     fastembed_model: str = "BAAI/bge-small-en-v1.5"
     fastembed_cache_dir: str | None = None
 
@@ -450,6 +455,9 @@ def load_config() -> CollectionConfig:
     - ``MARKDOWN_VAULT_MCP_OPENAI_EMBEDDING_MODEL`` or
       ``OPENAI_EMBEDDING_MODEL``: embedding model name; default
       ``"text-embedding-3-small"``.
+    - ``MARKDOWN_VAULT_MCP_EMBEDDING_MAX_TOKENS_PER_REQUEST``: estimated-token
+      budget per embedding request during bulk (re)indexing; default
+      ``200000``; ``0`` disables splitting.
     - ``MARKDOWN_VAULT_MCP_FASTEMBED_MODEL``: FastEmbed model name; default
       ``"BAAI/bge-small-en-v1.5"``.
     - ``MARKDOWN_VAULT_MCP_FASTEMBED_CACHE_DIR``: FastEmbed model cache
@@ -765,6 +773,22 @@ def load_config() -> CollectionConfig:
     openai_embedding_model: str = raw_openai_embedding_model or "text-embedding-3-small"
     logger.debug("load_config: openai_embedding_model=%s", openai_embedding_model)
 
+    raw_max_tokens = (_env("EMBEDDING_MAX_TOKENS_PER_REQUEST") or "").strip()
+    embedding_max_tokens_per_request = 200_000
+    if raw_max_tokens:
+        try:
+            embedding_max_tokens_per_request = int(raw_max_tokens)
+        except ValueError:
+            logger.warning(
+                "load_config: invalid EMBEDDING_MAX_TOKENS_PER_REQUEST=%r, "
+                "using default 200000",
+                raw_max_tokens,
+            )
+    logger.debug(
+        "load_config: embedding_max_tokens_per_request=%s",
+        embedding_max_tokens_per_request,
+    )
+
     raw_fastembed_model = (_env("FASTEMBED_MODEL") or "").strip()
     fastembed_model: str = raw_fastembed_model or "BAAI/bge-small-en-v1.5"
     logger.debug("load_config: fastembed_model=%s", fastembed_model)
@@ -886,6 +910,7 @@ def load_config() -> CollectionConfig:
         openai_api_key=openai_api_key,
         openai_base_url=openai_base_url,
         openai_embedding_model=openai_embedding_model,
+        embedding_max_tokens_per_request=embedding_max_tokens_per_request,
         fastembed_model=fastembed_model,
         fastembed_cache_dir=fastembed_cache_dir,
         chunks_per_file=chunks_per_file,

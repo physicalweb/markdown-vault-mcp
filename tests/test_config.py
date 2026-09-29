@@ -1331,3 +1331,22 @@ class TestMaxAttachmentSizeMbDefault:
         monkeypatch.delenv("MARKDOWN_VAULT_MCP_MAX_ATTACHMENT_SIZE_MB", raising=False)
         config = load_config()
         assert config.max_attachment_size_mb == 1.0
+
+
+def test_embedding_max_tokens_per_request_env(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The per-request embedding token budget is read from the env, with a default."""
+    from markdown_vault_mcp.config import load_config
+
+    monkeypatch.setenv("MARKDOWN_VAULT_MCP_SOURCE_DIR", str(tmp_path))
+    monkeypatch.delenv(
+        "MARKDOWN_VAULT_MCP_EMBEDDING_MAX_TOKENS_PER_REQUEST", raising=False
+    )
+    assert load_config().embedding_max_tokens_per_request == 200_000
+
+    monkeypatch.setenv("MARKDOWN_VAULT_MCP_EMBEDDING_MAX_TOKENS_PER_REQUEST", "50000")
+    assert load_config().embedding_max_tokens_per_request == 50_000
+
+    monkeypatch.setenv("MARKDOWN_VAULT_MCP_EMBEDDING_MAX_TOKENS_PER_REQUEST", "lots")
+    assert load_config().embedding_max_tokens_per_request == 200_000

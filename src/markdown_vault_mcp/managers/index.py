@@ -15,6 +15,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from markdown_vault_mcp.fts_index import _derive_folder
+from markdown_vault_mcp.providers import (
+    EmbeddingRequestTooLargeError,
+    embed_in_token_batches,
+)
 from markdown_vault_mcp.scanner import parse_note, scan_directory
 from markdown_vault_mcp.types import IndexStats, ParsedNote, ReindexResult
 from markdown_vault_mcp.utils import is_path_excluded
@@ -523,14 +527,34 @@ class IndexManager:
             vectors._provider, "recommended_batch_size", _EMBEDDING_BATCH_SIZE
         ) if hasattr(vectors, "_provider") else _EMBEDDING_BATCH_SIZE
         total = len(texts)
+        skipped_paths: list[str] = []
         for start in range(0, total, batch_size):
             end = min(start + batch_size, total)
-            vectors.add(texts[start:end], meta[start:end])
+            batch_texts = texts[start:end]
+            batch_meta = meta[start:end]
+            # A single chunk over the provider's token cap is dropped and
+            # named; the rest of the batch still lands (AGO-576).
+            while batch_texts:
+                try:
+                    vectors.add(batch_texts, batch_meta)
+                    break
+                except EmbeddingRequestTooLargeError as exc:
+                    logger.warning("build_embeddings: skipping a chunk — %s", exc)
+                    skipped_paths.append(str(exc.path))
+                    del batch_texts[exc.index]
+                    del batch_meta[exc.index]
             logger.info(
                 "build_embeddings: embedded chunks %d-%d of %d",
                 start + 1,
                 end,
                 total,
+            )
+        if skipped_paths:
+            logger.warning(
+                "build_embeddings: %d chunk(s) exceeded the embedding request "
+                "token cap and were not embedded: %s",
+                len(skipped_paths),
+                sorted(set(skipped_paths)),
             )
 
         if total > 0:
@@ -693,12 +717,23 @@ class IndexManager:
                         for c in note.chunks
                     ]
                     if texts:
-                        raw_vecs = self._embedding_provider.embed(texts)
+                        raw_vecs = embed_in_token_batches(
+                            self._embedding_provider, texts
+                        )
                         pre_embedded.append((path, raw_vecs, meta))
                     else:
                         pre_embedded.append((path, None, None))
                 except (UnicodeDecodeError, OSError) as exc:
                     logger.warning("Deferred embedding failed for %s: %s", path, exc)
+                    pre_embedded.append((path, None, None))
+                except Exception as exc:
+                    # Provider failure: this document's stale vectors are
+                    # dropped below; the other dirty documents still flush.
+                    logger.warning(
+                        "Deferred embedding failed for %s — provider error: %s",
+                        path,
+                        exc,
+                    )
                     pre_embedded.append((path, None, None))
             else:
                 pre_embedded.append((path, None, None))
