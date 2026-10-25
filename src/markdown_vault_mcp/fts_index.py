@@ -155,6 +155,28 @@ def _normalize_heading(heading: str) -> str:
     return " ".join(heading.split())
 
 
+def _is_query_syntax_error(exc: sqlite3.OperationalError) -> bool:
+    """True when *exc* is FTS5 rejecting the MATCH expression, not a database fault."""
+    msg = str(exc).lower()
+    return (
+        "fts5" in msg
+        or "syntax error" in msg
+        or "no such column" in msg
+        or "unterminated" in msg
+    )
+
+
+def _as_plain_terms(query: str) -> str:
+    """Rewrite *query* as its whitespace-separated words, each an FTS5 quoted phrase.
+
+    Inside a phrase the tokenizer splits a word the same way it split the
+    indexed text ("SKILL.md" -> skill md, adjacent), and operator characters
+    lose their meaning. Words with no letter or digit are dropped.
+    """
+    words = [w.replace('"', "") for w in query.split()]
+    return " ".join(f'"{w}"' for w in words if any(ch.isalnum() for ch in w))
+
+
 def _open_connection(db_path: Path | str) -> sqlite3.Connection:
     """Open an SQLite connection with required pragmas and schema applied.
 
@@ -727,16 +749,24 @@ class FTSIndex:
         try:
             cur = self._conn.execute(sql, params)
         except sqlite3.OperationalError as exc:
-            msg = str(exc).lower()
-            if (
-                "fts5" in msg
-                or "syntax error" in msg
-                or "no such column" in msg
-                or "unterminated" in msg
-            ):
-                logger.debug("FTS search: malformed query %r — %s", query, exc)
+            if not _is_query_syntax_error(exc):
+                raise
+            # AGO-189: a plain-words query that FTS5 cannot parse ("SKILL.md", "co-addressee", a
+            # stray colon or quote) used to return [] over text that IS indexed, so an empty result
+            # read as absence. Retry it as plain words — each term a quoted phrase, ANDed as before.
+            terms = _as_plain_terms(query)
+            logger.debug(
+                "FTS search: malformed query %r — %s; retrying as %r", query, exc, terms
+            )
+            if not terms:
                 return []
-            raise
+            params[len(snippet_params)] = terms
+            try:
+                cur = self._conn.execute(sql, params)
+            except sqlite3.OperationalError as exc2:
+                if _is_query_syntax_error(exc2):
+                    return []
+                raise
         rows = cur.fetchall()
         logger.debug("FTS search: %d results for query=%r", len(rows), query)
 

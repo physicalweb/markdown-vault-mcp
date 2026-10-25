@@ -352,6 +352,60 @@ class TestSearch:
         results = idx.search("nonexistent_column:value")
         assert results == []
 
+    def test_search_plain_words_fts5_cannot_parse_still_match(self) -> None:
+        """AGO-189: words FTS5 rejects as syntax ("SKILL.md", "co-addressee") match indexed text.
+
+        Before, the parse error was swallowed and the search returned [] over
+        text that IS indexed, so an empty result read as absence.
+        """
+        idx = FTSIndex(":memory:")
+        idx.upsert_note(
+            make_note(
+                "a.md",
+                chunks=[
+                    Chunk(
+                        heading="Portability",
+                        heading_level=2,
+                        content=(
+                            "Portability (settled, external): the manifest is a strict "
+                            "SKILL.md superset. Who is a ratified witness vs co-addressee."
+                        ),
+                        start_line=0,
+                    )
+                ],
+            )
+        )
+        for q in (
+            "Portability settled external the manifest is a strict SKILL.md superset",
+            "ratified witness co-addressee",
+            'manifest "superset',
+            "witness: superset",
+        ):
+            assert [r.path for r in idx.search(q)] == ["a.md"], q
+        # Still AND: a word absent from the text keeps the result empty.
+        assert idx.search("SKILL.md superset nowhere") == []
+        # Only punctuation left after the rewrite: nothing to search.
+        assert idx.search("- .") == []
+
+    def test_search_valid_fts5_syntax_is_not_rewritten(self) -> None:
+        """Deliberate FTS5 operators keep their meaning (the rewrite runs only on a parse error)."""
+        idx = FTSIndex(":memory:")
+        idx.upsert_note(
+            make_note(
+                "a.md",
+                chunks=[
+                    Chunk(
+                        heading=None,
+                        heading_level=0,
+                        content="alpha beta",
+                        start_line=0,
+                    )
+                ],
+            )
+        )
+        assert len(idx.search("alpha OR missing")) == 1
+        assert len(idx.search("alp*")) == 1
+
     def test_search_non_fts5_operational_error_propagates(self) -> None:
         """Non-FTS5 OperationalError (e.g. DB lock) must propagate, not return []."""
         from unittest.mock import MagicMock
