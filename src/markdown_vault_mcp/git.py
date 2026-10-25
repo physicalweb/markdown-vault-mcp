@@ -376,6 +376,21 @@ class GitWriteStrategy:
             return None
         return _build_askpass_env(self._token, self._username)
 
+    def _rebase_env(self, env: dict[str, str] | None) -> dict[str, str]:
+        """Environment for ``git rebase``: *env* plus the strategy's committer identity.
+
+        A rebase writes every replayed commit as a new committer.  Commits get the
+        identity via ``-c user.*`` (:func:`_stage_and_commit`), but a rebase had none:
+        in a container with no git config it died ("empty ident name"), and the pull
+        reported ``conflict_resolution_failed`` for a divergence with no overlapping
+        file, wedging the clone (AGO-756).  Authors are kept from the replayed commits.
+        """
+        return {
+            **(env if env is not None else os.environ),
+            "GIT_COMMITTER_NAME": self._commit_name,
+            "GIT_COMMITTER_EMAIL": self._commit_email,
+        }
+
     def _cleanup_git_env(self, env: dict[str, str] | None) -> None:
         if env is None:
             return
@@ -824,7 +839,7 @@ class GitWriteStrategy:
                 ["git", "-C", root, "rebase", "--continue"],
                 capture_output=True,
                 text=True,
-                env={**(env or {}), "GIT_EDITOR": "true"},
+                env={**self._rebase_env(env), "GIT_EDITOR": "true"},
             )
             if cont.returncode == 0:
                 # Rebase completed successfully.
@@ -1464,7 +1479,7 @@ class GitWriteStrategy:
         # local commits touch *different* files than the upstream commits
         # and replay cleanly with no manual intervention.
         try:
-            self._git(git_root, "rebase", "@{upstream}", env=env)
+            self._git(git_root, "rebase", "@{upstream}", env=self._rebase_env(env))
         except subprocess.CalledProcessError:
             # Real conflicts during rebase — resolve by accepting upstream
             # and saving the local MCP versions as Syncthing-style siblings.
@@ -1813,7 +1828,7 @@ class GitWriteStrategy:
                             capture_output=True,
                             text=True,
                             check=True,
-                            env=env,
+                            env=self._rebase_env(env),
                         )
                         logger.info(
                             "Git pull: ff-only not possible, rebased local commits onto upstream"
