@@ -1471,8 +1471,8 @@ class FTSIndex:
                 break
         return out
 
-    def list_section_headings(self, path: str, *, limit: int = 50) -> list[str]:
-        """Return up to *limit* section headings for *path*, in document order.
+    def list_section_headings(self, path: str, *, limit: int | None = 50) -> list[str]:
+        """Return up to *limit* section headings for *path* (all when ``None``), in document order.
 
         Used to build "did you mean" suggestions when
         :meth:`get_section` misses.  Sections without a heading
@@ -1481,7 +1481,8 @@ class FTSIndex:
 
         Args:
             path: Relative document path.
-            limit: Maximum number of headings to return.
+            limit: Maximum number of headings to return; ``None`` returns
+                every heading.
 
         Returns:
             List of heading strings in document order, deduplicated while
@@ -1497,7 +1498,7 @@ class FTSIndex:
             ORDER BY MIN(s.start_line) ASC
             LIMIT ?
             """,
-            (path, limit),
+            (path, -1 if limit is None else limit),
         ).fetchall()
         return [row["heading"] for row in rows]
 

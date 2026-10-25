@@ -112,7 +112,7 @@ def test_read_unknown_section_lists_available_headings(doc_mgr):
         doc_mgr.read("a.md", section="No Such Heading")
     message = str(excinfo.value)
     assert "No Such Heading" in message
-    assert "available headings include" in message
+    assert "all 3 headings in this document" in message
     assert "'Section One'" in message
     assert "'Section Two'" in message
 
@@ -223,3 +223,63 @@ def test_read_section_announces_a_cut_when_the_cap_binds(tmp_path):
     assert "LAST-WORD-OF-SECTION" not in nc.content
     assert "[section 'Big Section' continues:" in nc.content
     assert "read('long.md')" in nc.content
+
+
+def _mgr_for(tmp_path, body):
+    (tmp_path / "a.md").write_text(body, encoding="utf-8")
+    fts = FTSIndex(db_path=":memory:")
+    chunker = HeadingChunker()
+    for note in scan_directory(tmp_path, chunk_strategy=chunker):
+        fts.upsert_note(note)
+    return DocumentManager(
+        fts=fts,
+        source_dir=tmp_path,
+        write_lock=threading.RLock(),
+        chunk_strategy=chunker,
+    )
+
+
+def test_read_unknown_section_lists_every_heading_past_ten(tmp_path):
+    """AGO-188: the miss listing names ALL headings with their count — a cut at ten read as the whole doc."""
+    body = "# Title\n" + "\n".join(["intro"] * 12) + "\n"
+    for i in range(12):
+        body += f"## {i}. Part {i}\n" + "\n".join([f"body {i}"] * 6) + "\n"
+    mgr = _mgr_for(tmp_path, body)
+    with pytest.raises(ValueError) as excinfo:
+        mgr.read("a.md", section="No Such Heading")
+    message = str(excinfo.value)
+    assert "all 13 headings in this document" in message
+    assert "'10. Part 10'" in message
+    assert "'11. Part 11'" in message
+    assert "include" not in message
+
+
+def test_read_section_accepts_heading_as_written(tmp_path):
+    """AGO-188: "## 7. Title" (markdown as written) and a closing "##" resolve to the same section."""
+    body = (
+        "# A\n"
+        + "\n".join(["intro"] * 16)
+        + "\n## 7. What we do not do\n"
+        + "\n".join(["seventh body"] * 16)
+        + "\n"
+    )
+    mgr = _mgr_for(tmp_path, body)
+    for heading in ("## 7. What we do not do", "##   7. What we do not do ##", "# 7. What we do not do"):
+        nc = mgr.read("a.md", section=heading)
+        assert nc is not None
+        assert "seventh body" in nc.content
+
+
+def test_read_section_literal_hash_heading_still_exact(tmp_path):
+    """A stored heading that itself begins with "# " still matches exactly (stripping is only the fallback)."""
+    body = (
+        "# A\n"
+        + "\n".join(["intro"] * 16)
+        + "\n## # hashed\n"
+        + "\n".join(["hashed body"] * 16)
+        + "\n"
+    )
+    mgr = _mgr_for(tmp_path, body)
+    nc = mgr.read("a.md", section="# hashed")
+    assert nc is not None
+    assert "hashed body" in nc.content

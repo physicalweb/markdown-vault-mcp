@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import logging
 import mimetypes
+import re
 import shutil
 import sqlite3
 import tempfile
@@ -66,6 +67,16 @@ if TYPE_CHECKING:
     from markdown_vault_mcp.types import ParsedNote
 
 logger = logging.getLogger(__name__)
+
+_ATX_OPEN = re.compile(r"^#{1,6}[ \t]+")
+_ATX_CLOSE = re.compile(r"[ \t]+#+[ \t]*$")
+
+
+def _strip_atx_markers(heading: str) -> str:
+    """Return *heading* without a leading ATX marker ("## ") or a closing "#" run, else unchanged."""
+    if not _ATX_OPEN.match(heading):
+        return heading
+    return _ATX_CLOSE.sub("", _ATX_OPEN.sub("", heading)).strip()
 
 
 class DocumentManager:
@@ -356,6 +367,12 @@ class DocumentManager:
                 "document is not indexed or does not exist"
             )
         chunks = self._fts.get_section_chunks(path, heading)
+        if not chunks:
+            # A heading copied as written in the file ("## 7. Title", or with a closing "##") names the
+            # same section as its stripped text; a stored heading never carries the markers (AGO-188).
+            bare = _strip_atx_markers(heading)
+            if bare and bare != heading:
+                chunks = self._fts.get_section_chunks(path, bare)
         section_row = chunks[0] if chunks else None
         if section_row is not None and len(chunks) > 1:
             # Keep only the chunks that CONTINUE the first section: a chunk starting on a heading line
@@ -368,10 +385,13 @@ class DocumentManager:
             # path is by definition rare (LLM caller already gave us a
             # bad heading) and consolidating the queries would couple
             # get_section's return shape to error-message rendering.
-            available = self._fts.list_section_headings(path, limit=10)
+            # ALL the headings, counted (AGO-188): a listing cut at ten read as the whole document, so
+            # the sections past the tenth read as absent.
+            available = self._fts.list_section_headings(path, limit=None)
             if available:
-                suggestion = " — available headings include: " + ", ".join(
-                    repr(h) for h in available
+                suggestion = (
+                    f" — all {len(available)} headings in this document: "
+                    + ", ".join(repr(h) for h in available)
                 )
             else:
                 suggestion = " (document has no indexed headings)"

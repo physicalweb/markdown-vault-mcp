@@ -402,7 +402,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 only the first indexed chunk; if the read cap cuts it, the
                 text ends with a line saying how much was left and how to
                 get it. Pass the ``heading`` value from a ``search`` result
-                unchanged for guaranteed match. ``None`` (the default)
+                unchanged for guaranteed match; the heading as written in
+                the file ("## 7. Title") matches too. On a miss the error
+                lists every heading in the document. ``None`` (the default)
                 returns the whole document. Ignored for non-.md paths.
 
         Returns:
