@@ -231,10 +231,16 @@ class WriteResult:
     Attributes:
         path: Relative path of the document that was written.
         created: ``True`` if the document was newly created; ``False`` if overwritten.
+        pushed: With push-on-write: ``True`` when the write is on the shared
+            remote; ``False`` when it is saved and committed here but not yet
+            pushed (see *push_error*; it is retried).  ``None`` otherwise.
+        push_error: Why the push failed, when *pushed* is ``False``.
     """
 
     path: str
     created: bool
+    pushed: bool | None = None
+    push_error: str | None = None
 
 
 @dataclass
@@ -245,11 +251,15 @@ class EditResult:
         path: Relative path of the document that was edited.
         replacements: Number of text replacements made (always 1 for exact match).
         match_type: How the replacement was found: ``"exact"`` (verbatim match) or ``"normalized"`` (whitespace-normalised match).
+        pushed: As :attr:`WriteResult.pushed`.
+        push_error: As :attr:`WriteResult.push_error`.
     """
 
     path: str
     replacements: int
     match_type: str = "exact"
+    pushed: bool | None = None
+    push_error: str | None = None
 
 
 @dataclass
@@ -558,8 +568,10 @@ class CommitDiff:
     diff: str
 
 
+# The return value is ignored, except a git strategy's ``PushOutcome``
+# (push-on-write), which the collection reports on the write's result.
 WriteCallback = Callable[
-    [Path, str, Literal["write", "edit", "delete", "rename"]], None
+    [Path, str, Literal["write", "edit", "delete", "rename"]], object
 ]
 
 # Default set of allowed attachment extensions (without leading dot, lower-case).

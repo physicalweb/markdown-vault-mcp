@@ -1734,6 +1734,9 @@ class TestConcurrentWrites:
             def stop(self) -> None:
                 self.stopped = True
 
+            def flush(self) -> None:
+                pass
+
             def close(self) -> None:
                 self.closed = True
 

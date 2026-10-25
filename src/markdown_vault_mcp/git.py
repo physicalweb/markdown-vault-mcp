@@ -259,6 +259,20 @@ class PushResult:
     hint: str | None = None
 
 
+@dataclass
+class PushOutcome:
+    """What an inline push (``push_on_write``) did for one write.
+
+    Attributes:
+        pushed: ``True`` when the write's commit is on the remote.
+        error: Why not, when ``pushed`` is ``False``.  The commit stays
+            local and is pushed by the next write, ``flush`` or startup.
+    """
+
+    pushed: bool
+    error: str | None = None
+
+
 class GitWriteStrategy:
     """Stateful git strategy: commit per write, deferred push.
 
@@ -286,7 +300,13 @@ class GitWriteStrategy:
         enable_pull: Enable fetch + ff-only sync methods.
         enable_push: Enable deferred push behavior.
         push_delay_s: Seconds of idle before pushing.  ``0`` disables
-            the timer (push only on :meth:`close`).
+            the timer (push only on :meth:`close`).  Ignored when
+            *push_on_write* is set.
+        push_on_write: When ``True`` (and *enable_push*), each write is
+            pushed inline, before the write callback returns, and the
+            callback returns a :class:`PushOutcome`.  A rejected push is
+            retried once after a fetch + rebase.  Makes a write that reports
+            success durable on the remote (AGO-802).
         commit_name: Git committer name; defaults to
             :attr:`DEFAULT_COMMIT_NAME`.
         commit_email: Git committer email; defaults to
@@ -326,6 +346,7 @@ class GitWriteStrategy:
         commit_email: str | None = None,
         git_lfs: bool = True,
         repo_path: Path | None = None,
+        push_on_write: bool = False,
     ) -> None:
         # Token is retained for GIT_ASKPASS credential forwarding in subprocesses.
         # This pattern is intentionally accepted and suppressed in CodeQL config.
@@ -336,6 +357,7 @@ class GitWriteStrategy:
         self._enable_pull = enable_pull
         self._enable_push = enable_push
         self._push_delay_s = push_delay_s
+        self._push_on_write = push_on_write
         self._commit_name = commit_name or self.DEFAULT_COMMIT_NAME
         self._commit_email = commit_email or self.DEFAULT_COMMIT_EMAIL
         self._git_lfs = git_lfs
@@ -364,6 +386,11 @@ class GitWriteStrategy:
                 self._ensure_managed_repo(repo_path)
             else:
                 self.validate_startup(repo_path)
+
+    @property
+    def pushes_on_write(self) -> bool:
+        """``True`` when each write is pushed inline (push-on-write)."""
+        return self._enable_push and self._push_on_write
 
     def _git_env(self) -> dict[str, str] | None:
         """Build environment for git subprocess calls.
@@ -568,23 +595,29 @@ class GitWriteStrategy:
         path: Path,
         content: str,  # noqa: ARG002
         operation: Literal["write", "edit", "delete", "rename"],
-    ) -> None:
-        """WriteCallback interface: stage + commit, then schedule push."""
+    ) -> PushOutcome | None:
+        """WriteCallback interface: stage + commit, then push or schedule push.
+
+        Returns:
+            A :class:`PushOutcome` when *push_on_write* is active (the
+            push ran inline), otherwise ``None``.
+        """
         if self._closed:
-            return
+            return None
 
         self._ensure_git_root(path)
         if self._git_root is None:
             logger.debug(
                 "No git repository found for %s; git operations disabled", path
             )
-            return
+            return None
 
         self._ensure_write_init()
 
         if self._git_root is None:
-            return
+            return None
 
+        inline = self._enable_push and self._push_on_write
         try:
             with self._lock:
                 _stage_and_commit(
@@ -594,6 +627,8 @@ class GitWriteStrategy:
                     commit_name=self._commit_name,
                     commit_email=self._commit_email,
                 )
+            if inline:
+                return self._push_now()
             if self._enable_push:
                 self._schedule_push()
         except subprocess.CalledProcessError as exc:
@@ -606,13 +641,75 @@ class GitWriteStrategy:
                 exc.returncode,
                 sanitized_stderr,
             )
-        except Exception:
+            if inline:
+                return PushOutcome(
+                    pushed=False, error=f"commit failed: {sanitized_stderr.strip()}"
+                )
+        except Exception as exc:
             logger.error(
                 "Git operation failed for %s (%s)",
                 path,
                 operation,
                 exc_info=True,
             )
+            if inline:
+                return PushOutcome(
+                    pushed=False, error=f"commit failed: {self._redact(str(exc))}"
+                )
+        return None
+
+    def _push_now(self) -> PushOutcome:
+        """Push inline, once more after a fetch + rebase if rejected (AGO-802).
+
+        Runs under :attr:`_lock`, so it never overlaps a pull or another push.
+        A push that still fails leaves ``_push_pending`` set: the commit is
+        local only, and the next write, :meth:`flush` or startup pushes it.
+        """
+        assert self._git_root is not None
+        git_root = self._git_root
+        with self._lock:
+            self._push_pending = True
+            try:
+                _push(git_root, self._token, self._username)
+            except subprocess.CalledProcessError as first:
+                logger.warning(
+                    "Git: push rejected, fetching and rebasing once: %s",
+                    self._redact((first.stderr or "").strip()),
+                )
+                try:
+                    self._rebase_onto_upstream(git_root)
+                    _push(git_root, self._token, self._username)
+                except subprocess.CalledProcessError as exc:
+                    error = self._redact((exc.stderr or "").strip() or str(exc))
+                    logger.error("Git: push failed after rebase: %s", error)
+                    return PushOutcome(pushed=False, error=error)
+            self._push_pending = False
+        logger.info("Git: pushed to remote")
+        return PushOutcome(pushed=True)
+
+    def _rebase_onto_upstream(self, git_root: Path) -> None:
+        """Fetch, then replay local commits onto ``@{upstream}``.
+
+        On a failed rebase (a real conflict) the rebase is aborted, so the
+        clone is left as it was, and the error is raised.  Caller holds
+        :attr:`_lock`.
+        """
+        env = self._git_env()
+        try:
+            self._git(git_root, "fetch", env=env)
+            try:
+                self._git(git_root, "rebase", "@{upstream}", env=self._rebase_env(env))
+            except subprocess.CalledProcessError:
+                if self._rebase_in_progress(git_root, env):
+                    subprocess.run(
+                        ["git", "-C", str(git_root), "rebase", "--abort"],
+                        capture_output=True,
+                        text=True,
+                        env=env,
+                    )
+                raise
+        finally:
+            self._cleanup_git_env(env)
 
     def _schedule_push(self) -> None:
         """Reset the idle push timer."""

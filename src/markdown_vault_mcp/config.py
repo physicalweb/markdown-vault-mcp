@@ -88,6 +88,9 @@ class CollectionConfig:
         git_push_delay_s: Seconds of write-idle time before flushing local
             commits to the remote (default ``30.0``).  ``0`` means push only
             on shutdown.
+        git_push_on_write: When ``True``, push each write before the write
+            tool returns, and report the push on its result (default
+            ``False``; AGO-802).  Overrides *git_push_delay_s* for writes.
         git_commit_name: Git committer name for auto-commits (default
             ``"markdown-vault-mcp"``).
         git_commit_email: Git committer e-mail for auto-commits (default
@@ -182,6 +185,7 @@ class CollectionConfig:
     git_repo_url: str | None = None
     git_username: str = "x-access-token"
     git_push_delay_s: float = 30.0
+    git_push_on_write: bool = False
     git_commit_name: str = "markdown-vault-mcp"
     git_commit_email: str = "noreply@markdown-vault-mcp"
     git_lfs: bool = True
@@ -305,6 +309,7 @@ class CollectionConfig:
                 commit_email=self.git_commit_email,
                 git_lfs=self.git_lfs,
                 repo_path=self.source_dir,
+                push_on_write=self.git_push_on_write,
             )
             kwargs["git_pull_interval_s"] = self.git_pull_interval_s
             kwargs["git_strategy"] = git_strategy
@@ -325,6 +330,7 @@ class CollectionConfig:
                 commit_email=self.git_commit_email,
                 git_lfs=self.git_lfs,
                 repo_path=self.source_dir,
+                push_on_write=self.git_push_on_write,
             )
             kwargs["git_pull_interval_s"] = self.git_pull_interval_s
             kwargs["git_strategy"] = git_strategy
@@ -380,6 +386,9 @@ def load_config() -> CollectionConfig:
       mode; default ``x-access-token``.
     - ``MARKDOWN_VAULT_MCP_GIT_PUSH_DELAY_S``: seconds of idle before pushing
       (default ``30``).  Set to ``0`` to push only on shutdown.
+    - ``MARKDOWN_VAULT_MCP_GIT_PUSH_ON_WRITE``: push each write before the
+      write tool returns and report it (``pushed``, ``push_error``) on the
+      result; default ``false``.
     - ``MARKDOWN_VAULT_MCP_GIT_COMMIT_NAME``: git committer name for
       auto-commits; default ``markdown-vault-mcp``.
     - ``MARKDOWN_VAULT_MCP_GIT_COMMIT_EMAIL``: git committer email for
@@ -559,6 +568,12 @@ def load_config() -> CollectionConfig:
     else:
         git_push_delay_s = 30.0
     logger.debug("load_config: git_push_delay_s=%s", git_push_delay_s)
+
+    raw_push_on_write = _env("GIT_PUSH_ON_WRITE")
+    git_push_on_write: bool = (
+        _parse_bool(raw_push_on_write) if raw_push_on_write is not None else False
+    )
+    logger.debug("load_config: git_push_on_write=%s", git_push_on_write)
 
     raw_git_lfs = _env("GIT_LFS")
     git_lfs: bool = _parse_bool(raw_git_lfs) if raw_git_lfs is not None else True
@@ -879,6 +894,7 @@ def load_config() -> CollectionConfig:
         git_repo_url=git_repo_url,
         git_username=git_username,
         git_push_delay_s=git_push_delay_s,
+        git_push_on_write=git_push_on_write,
         git_commit_name=git_commit_name,
         git_commit_email=git_commit_email,
         git_lfs=git_lfs,

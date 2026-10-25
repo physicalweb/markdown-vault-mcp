@@ -6,14 +6,17 @@ LangChain wrappers, and CLI commands all go through this class.
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
+import dataclasses
 import logging
 import queue
 import re
 import threading
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from markdown_vault_mcp.fts_index import FTSIndex
+from markdown_vault_mcp.git import PushOutcome
 from markdown_vault_mcp.scanner import (
     ChunkStrategy,
     HeadingChunker,
@@ -45,7 +48,7 @@ from markdown_vault_mcp.types import (
 from markdown_vault_mcp.utils import effective_attachment_extensions
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from markdown_vault_mcp.git import GitWriteStrategy
@@ -56,6 +59,11 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_STATE_SUBDIR = ".markdown_vault_mcp"
 _DEFAULT_STATE_FILENAME = "state.json"
+
+# How long a push-on-write write waits for its commit and push (AGO-802).
+_PUSH_WAIT_S = 60.0
+
+_R = TypeVar("_R", WriteResult, EditResult)
 
 
 def _resolve_chunk_strategy(strategy: str | ChunkStrategy) -> ChunkStrategy:
@@ -277,6 +285,13 @@ class Collection:
         self._callback_worker: threading.Thread | None = None
         self._callback_worker_lock = threading.Lock()
 
+        # Push-on-write (AGO-802): write/edit wait for their own callbacks
+        # (commit + push) and report the push on their result, so a write
+        # that says it succeeded is on the remote.  The calling thread's
+        # pending callbacks are collected here while it waits.
+        self._await_push = getattr(on_write, "pushes_on_write", False) is True
+        self._awaiting = threading.local()
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -329,10 +344,7 @@ class Collection:
         Flushes deferred embeddings and pending write callbacks, then
         closes the SQLite connection and git strategy.
         """
-        # 1. Flush any deferred embedding updates.
-        self._index_mgr.flush_dirty_embeddings()
-
-        # 2. Drain the write-callback queue (git commits).
+        # 1. Drain the write-callback queue (git commits).
         if self._callback_worker is not None and self._callback_worker.is_alive():
             self._callback_queue.put(None)  # sentinel
             self._callback_worker.join(timeout=30)
@@ -342,7 +354,16 @@ class Collection:
                     "pending git commits may be lost."
                 )
 
-        # 3. Close git strategy (flush push, etc.).
+        # 2. Push before the embedding flush: the flush calls the embedding
+        # provider and can outlast a stop timeout; unpushed commits on an
+        # ephemeral clone are lost with the task (AGO-802).
+        if self._git_strategy is not None:
+            self._git_strategy.flush()
+
+        # 3. Flush any deferred embedding updates.
+        self._index_mgr.flush_dirty_embeddings()
+
+        # 4. Close git strategy (flush push, etc.).
         if self._git_strategy is not None:
             self._git_strategy.close()
         if (
@@ -969,11 +990,17 @@ class Collection:
                     # 4-tuple form propagates contextvars set by the
                     # async middleware (e.g., per-request OIDC author
                     # identity) across the asyncio→thread boundary.
-                    if len(item) == 4:
+                    # A 5-tuple adds a Future for a writer awaiting its
+                    # callback (push-on-write, AGO-802).
+                    future: concurrent.futures.Future[object] | None = None
+                    if len(item) == 5:
+                        abs_path, content, operation, ctx, future = item
+                    elif len(item) == 4:
                         abs_path, content, operation, ctx = item
                     else:
                         abs_path, content, operation = item
                         ctx = None
+                    outcome: object = None
                     try:
                         if self._on_write is None:
                             logger.error(
@@ -987,16 +1014,20 @@ class Collection:
                         # to accept legacy 3-tuple OR new 4-tuple form).
                         op: Literal["write", "edit", "delete", "rename"] = operation
                         if ctx is not None:
-                            ctx.run(self._on_write, abs_path, content, op)
+                            outcome = ctx.run(self._on_write, abs_path, content, op)
                         else:
-                            self._on_write(abs_path, content, op)
-                    except Exception:
+                            outcome = self._on_write(abs_path, content, op)
+                    except Exception as exc:
                         logger.error(
                             "Write callback failed for %s (%s)",
                             abs_path,
                             operation,
                             exc_info=True,
                         )
+                        outcome = exc
+                    finally:
+                        if future is not None:
+                            future.set_result(outcome)
 
             self._callback_worker = threading.Thread(
                 target=_worker, daemon=True, name="write-callback"
@@ -1021,7 +1052,52 @@ class Collection:
         import contextvars
 
         ctx = contextvars.copy_context()
-        self._callback_queue.put((abs_path, content, operation, ctx))
+        waiting: list[concurrent.futures.Future[object]] | None = getattr(
+            self._awaiting, "futures", None
+        )
+        if waiting is None:
+            self._callback_queue.put((abs_path, content, operation, ctx))
+            return
+        future: concurrent.futures.Future[object] = concurrent.futures.Future()
+        waiting.append(future)
+        self._callback_queue.put((abs_path, content, operation, ctx, future))
+
+    def _awaiting_push(self, call: Callable[[], _R]) -> _R:
+        """Run a write, then wait for its git callbacks and report the push.
+
+        Push-on-write only (AGO-802); otherwise *call* runs as before and the
+        commit and push stay in the background.  The wait happens after the
+        write has released the write lock.
+        """
+        if not self._await_push:
+            return call()
+        futures: list[concurrent.futures.Future[object]] = []
+        self._awaiting.futures = futures
+        try:
+            result = call()
+        finally:
+            self._awaiting.futures = None
+        if not futures:
+            return result
+        errors: list[str] = []
+        for future in futures:
+            try:
+                outcome = future.result(timeout=_PUSH_WAIT_S)
+            except concurrent.futures.TimeoutError:
+                errors.append(
+                    f"commit and push did not finish within {_PUSH_WAIT_S:.0f} s"
+                )
+                continue
+            if isinstance(outcome, PushOutcome):
+                if not outcome.pushed:
+                    errors.append(outcome.error or "push failed")
+            elif isinstance(outcome, Exception):
+                errors.append(f"git callback failed: {outcome}")
+            else:
+                errors.append("no push ran (git disabled or closed)")
+        return dataclasses.replace(
+            result, pushed=not errors, push_error="; ".join(errors) or None
+        )
 
     def read_attachment(self, path: str) -> AttachmentContent:
         """Read the binary content of a non-.md attachment.
@@ -1082,8 +1158,10 @@ class Collection:
             ValueError: If *path* escapes the source directory.
         """
         self._ensure_initialized()
-        return self._doc_mgr.write(
-            path, content, frontmatter=frontmatter, if_match=if_match
+        return self._awaiting_push(
+            lambda: self._doc_mgr.write(
+                path, content, frontmatter=frontmatter, if_match=if_match
+            )
         )
 
     def edit(
@@ -1123,13 +1201,15 @@ class Collection:
             ValueError: If *path* escapes the source directory.
         """
         self._ensure_initialized()
-        return self._doc_mgr.edit(
-            path,
-            old_text=old_text,
-            new_text=new_text,
-            if_match=if_match,
-            line_start=line_start,
-            line_end=line_end,
+        return self._awaiting_push(
+            lambda: self._doc_mgr.edit(
+                path,
+                old_text=old_text,
+                new_text=new_text,
+                if_match=if_match,
+                line_start=line_start,
+                line_end=line_end,
+            )
         )
 
     def delete(self, path: str, if_match: str | None = None) -> DeleteResult:

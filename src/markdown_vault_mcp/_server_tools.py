@@ -1317,7 +1317,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
 
         Returns:
             Dict with path (str) and created (bool — true if new file,
-            false if overwrite).
+            false if overwrite).  When the server pushes on write, also
+            pushed (bool — true once the write is in the shared repository;
+            false means it is saved and committed here but not yet shared,
+            and is retried) and push_error (str or null — why not).
 
         Supports split (write several new notes from one source) and merge
         (extend an existing note with content from another) when composed with
@@ -1411,6 +1414,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             - **path** (str): path of the edited document.
             - **replacements** (int): always 1.
             - **match_type** (str): ``'exact'`` or ``'normalized'``.
+            - **pushed** / **push_error**: as for ``write`` (set when the
+              server pushes on write).
 
         Raises:
             ValueError: If parameter combination is invalid, or line
