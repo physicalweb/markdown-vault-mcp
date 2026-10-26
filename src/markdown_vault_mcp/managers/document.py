@@ -322,22 +322,36 @@ class DocumentManager:
             etag=etag,
         )
 
-    def _continuations(self, path: str, rest: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Of the same-heading chunks after the first, return the leading run that starts on body lines."""
-        import re
+    def _continuations(self, path: str, rest: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str | None]:
+        """Of the same-heading chunks after the first, return the leading run that continues the section.
 
+        A chunk that begins a new section sits on a heading line with the section's own title and level;
+        a continuation (the chunker's split of one long section) sits on a body line. ``start_line`` is
+        counted in the BODY — the text after the frontmatter, as the chunker saw it — so the file is read
+        the same way (AGO-826: reading the raw file, frontmatter included, put the check on the wrong
+        line, which in a file with frontmatter could land on the section's heading and drop the rest).
+
+        Returns ``(kept, reason)``: ``reason`` says why the chunks not kept were left out, or is
+        ``None`` when every chunk was kept.
+        """
         try:
-            lines = (self._source_dir / path).read_text(encoding="utf-8").splitlines()
-        except OSError:
-            return []
+            body_lines = fm.loads((self._source_dir / path).read_text(encoding="utf-8")).content.splitlines()
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            logger.warning("read(%s, section=): could not re-read the file to place chunks — %s", path, exc)
+            return [], "the file could not be re-read to tell them from a later section with the same title"
         out: list[dict[str, Any]] = []
         for c in rest:
             i = c.get("start_line")
-            line = lines[i] if isinstance(i, int) and 0 <= i < len(lines) else "#"
-            if re.match(r"^#{1,6}\s", line):
-                break
+            line = body_lines[i] if isinstance(i, int) and 0 <= i < len(body_lines) else None
+            if line is None:
+                return out, "the index places them past the end of the file (it may be behind the file)"
+            # The chunker's own heading pattern (scanner._split_at_levels), so a body line that merely
+            # looks like a deeper heading is not mistaken for the start of a same-titled section.
+            m = re.match(r"^(#{1,6})\s+(.+)$", line.rstrip())
+            if m and len(m.group(1)) == c.get("heading_level") and m.group(2).strip() == c.get("heading"):
+                return out, "they begin a later section with the same title"
             out.append(c)
-        return out
+        return out, None
 
     def _read_section(self, path: str, heading: str) -> NoteContent:
         """Return a NoteContent containing only the named section's chunk.
@@ -378,7 +392,11 @@ class DocumentManager:
             # Keep only the chunks that CONTINUE the first section: a chunk starting on a heading line
             # is a new section that repeats the title (first-occurrence semantics stay), a chunk starting
             # on a body line is the chunker's split of the same section (AGO-560).
-            chunks = [chunks[0]] + [c for c in self._continuations(path, chunks[1:])]
+            kept, left_out_reason = self._continuations(path, chunks[1:])
+            left_out = len(chunks) - 1 - len(kept)
+            chunks = [chunks[0], *kept]
+        else:
+            left_out, left_out_reason = 0, None
         if section_row is None:
             # Miss path only — fires a second SELECT over the same rows
             # get_section already fetched. Acceptable because the miss
@@ -422,6 +440,12 @@ class DocumentManager:
                 break
             parts.append(piece)
             used += len(piece.encode("utf-8")) + 2
+        if left_out:
+            # Never silent (AGO-826): a chunk under this title that is not served is counted and named.
+            parts.append(
+                f"[section {heading!r}: {left_out} more chunk(s) under this title not returned — "
+                f"{left_out_reason}; read({path!r}) for the whole document]"
+            )
         return NoteContent(
             path=path,
             title=doc_row["title"],

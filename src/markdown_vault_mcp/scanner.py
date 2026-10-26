@@ -268,9 +268,13 @@ class HeadingChunker:
                     # ``heading=None``; promote it to inherit the parent's
                     # heading so the inter-heading text stays attributed
                     # to the parent rather than appearing orphaned.
+                    # It also takes the parent's ``start_line`` (the heading
+                    # line), so every chunk carrying a heading starts on its
+                    # heading line and its content on the line after (AGO-826).
                     if sub_chunks[0].heading is None:
                         sub_chunks[0].heading = chunk.heading
                         sub_chunks[0].heading_level = chunk.heading_level
+                        sub_chunks[0].start_line = chunk.start_line
                     out.extend(
                         self._refine_oversize(sub_chunks, current_level=next_level)
                     )
@@ -286,9 +290,14 @@ class HeadingChunker:
         Used as the last-resort splitter when no deeper heading is available
         (e.g. an H6 section longer than the budget, or a preamble with no
         internal structure).  Preserves the parent chunk's ``heading`` and
-        ``heading_level`` on every fragment; ``start_line`` is the parent's
-        ``start_line`` offset by the paragraph or line offset within the
-        parent content.
+        ``heading_level`` on every fragment.  The first fragment keeps the
+        parent's ``start_line`` (for a section, its heading line — how a
+        section's first chunk is told from a continuation); every later
+        fragment's ``start_line`` is the body line of its own first line.
+        The parent's content begins on the line after its heading line, or on
+        ``start_line`` itself for a chunk with no heading (AGO-826 — counting
+        from the heading line put every later fragment one line short,
+        sometimes on the heading itself).
 
         Splitting hierarchy (each level used only when the previous level
         cannot keep the budget):
@@ -343,12 +352,14 @@ class HeadingChunker:
         pending_lines: list[str] = []
         pending_words = 0
 
+        content_base = chunk.start_line + (1 if chunk.heading is not None else 0)
+
         def make_chunk(content: str, offset: int) -> Chunk:
             return Chunk(
                 heading=chunk.heading,
                 heading_level=chunk.heading_level,
                 content=content,
-                start_line=chunk.start_line + offset,
+                start_line=content_base + offset if out else chunk.start_line,
             )
 
         def emit() -> None:

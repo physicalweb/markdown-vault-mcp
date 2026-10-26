@@ -313,3 +313,49 @@ def test_adaptive_mode_h3_only_doc_splits_at_h3():
     assert len(chunks) == 2
     assert {c.heading for c in chunks} == {"A", "B"}
     assert all(c.heading_level == 3 for c in chunks)
+
+
+def test_budget_split_fragment_start_line_is_its_first_line():
+    """AGO-826: a later fragment's start_line points at the fragment's own first line in the body —
+    the heading chunk's content begins one line after the heading, not on it."""
+    paras = "\n\n".join(f"P{n}-first " + " ".join(["w"] * 30) for n in range(8))
+    body = "# Top\n" + "\n".join(["intro"] * 31) + "\n## Long\n\n" + paras + "\n"
+    chunker = HeadingChunker(max_chunk_words=70)
+    chunks = [c for c in chunker.chunk(body, {}) if c.heading == "Long"]
+    assert len(chunks) > 2
+    lines = body.splitlines()
+    assert lines[chunks[0].start_line] == "## Long", (
+        "a section's first chunk starts on its heading line"
+    )
+    for c in chunks[1:]:
+        assert lines[c.start_line] == c.content.splitlines()[0], (
+            c.start_line,
+            c.content[:20],
+        )
+
+
+def test_budget_split_of_promoted_preamble_start_line_is_its_first_line():
+    """A section's text before its first sub-heading inherits the section's heading; its fragments
+    must count from the right base too."""
+    paras = "\n\n".join(f"Q{n}-first " + " ".join(["w"] * 30) for n in range(8))
+    body = (
+        "# Top\n"
+        + "\n".join(["intro"] * 31)
+        + "\n## Long\n"
+        + paras
+        + "\n### Sub\n"
+        + "\n".join(["sub body"] * 5)
+        + "\n"
+    )
+    chunker = HeadingChunker(max_chunk_words=70)
+    chunks = [c for c in chunker.chunk(body, {}) if c.heading == "Long"]
+    assert len(chunks) > 2
+    lines = body.splitlines()
+    assert lines[chunks[0].start_line] == "## Long", (
+        "a section's first chunk starts on its heading line"
+    )
+    for c in chunks[1:]:
+        assert lines[c.start_line] == c.content.splitlines()[0], (
+            c.start_line,
+            c.content[:20],
+        )

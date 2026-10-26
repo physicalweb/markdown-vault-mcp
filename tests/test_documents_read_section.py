@@ -283,3 +283,125 @@ def test_read_section_literal_hash_heading_still_exact(tmp_path):
     nc = mgr.read("a.md", section="# hashed")
     assert nc is not None
     assert "hashed body" in nc.content
+
+
+# ---------------------------------------------------------------------------
+# AGO-826 (2026-10-26): a section read in a file WITH frontmatter dropped its continuation chunks
+# silently — the continuation test read the raw file (frontmatter included) at a body-relative
+# start_line, and _budget_split counted fragments one line short of the heading chunk's content.
+# ---------------------------------------------------------------------------
+
+
+def _frontmatter_list_doc(tmp_path, *, fm_keys: int = 3, max_chunk_words: int = 60):
+    """A file shaped like the reported one: frontmatter, numbered sections, a long numbered list whose
+    last item carries indented continuation paragraphs, a closing line, then the next section."""
+    items = "\n\n".join(
+        f"{n}. Item {n} " + " ".join(f"alpha{n}x{k}" for k in range(14)) + "." for n in range(1, 6)
+    )
+    body = (
+        "---\n"
+        + "".join(f"key{k}: value {k}\n" for k in range(fm_keys))
+        + "---\n"
+        "\n"
+        "# Interim report\n\n"
+        + "\n".join(["preface line"] * 12)
+        + "\n\n## 5. Earlier\n\n"
+        + "\n".join(["earlier body"] * 8)
+        + "\n\n## 6. What comes next (not decided)\n\n"
+        + items
+        + "\n\n6. Item six opens here and waits with the rest for the checkpoint.\n\n"
+        "   *First indented* paragraph " + " ".join(f"beta{k}" for k in range(20)) + ".\n\n"
+        "   *Second indented* paragraph " + " ".join(f"gamma{k}" for k in range(20)) + ".\n\n"
+        "   *Third indented* paragraph " + " ".join(f"delta{k}" for k in range(20)) + ".\n\n"
+        "CLOSING-LINE-OF-SIX, if the checkpoint suggests it.\n\n"
+        "## 7. Later\n\n"
+        + "\n".join(["later body"] * 8)
+        + "\n"
+    )
+    (tmp_path / "r.md").write_text(body, encoding="utf-8")
+    fts = FTSIndex(db_path=":memory:")
+    chunker = HeadingChunker(max_chunk_words=max_chunk_words)
+    for note in scan_directory(tmp_path, chunk_strategy=chunker):
+        fts.upsert_note(note)
+    return fts, DocumentManager(
+        fts=fts,
+        source_dir=tmp_path,
+        write_lock=threading.RLock(),
+        chunk_strategy=chunker,
+        read_only=False,
+    )
+
+
+@pytest.mark.parametrize("fm_keys", range(1, 13))
+def test_section_in_frontmatter_file_returns_every_chunk(tmp_path, fm_keys):
+    """Every frontmatter length: the old misread line moved with it, and at some lengths it landed on
+    the section's own heading (the reported case) — the continuation was then dropped unannounced."""
+    fts, mgr = _frontmatter_list_doc(tmp_path, fm_keys=fm_keys)
+    heading = "6. What comes next (not decided)"
+    assert len(fts.get_section_chunks("r.md", heading)) > 2, "the fixture must split the section"
+    nc = mgr.read("r.md", section=heading)
+    assert nc is not None
+    for marker in ("Item 1 ", "Item six opens", "*First indented*", "*Second indented*", "*Third indented*", "CLOSING-LINE-OF-SIX"):
+        assert marker in nc.content, f"{marker!r} missing — the section was cut short (AGO-826)"
+    assert "later body" not in nc.content
+    assert "not returned" not in nc.content
+
+
+def test_section_read_announces_a_same_titled_section_left_out(tmp_path):
+    """First-occurrence semantics stay, but the left-out later section is announced, not silent."""
+    body = (
+        "# A\n"
+        + "\n".join(["intro"] * 16)
+        + "\n## Repeat\n"
+        + "\n".join(["first occurrence body"] * 6)
+        + "\n## Middle\n"
+        + "\n".join(["middle body"] * 6)
+        + "\n## Repeat\n"
+        + "\n".join(["second occurrence body"] * 6)
+        + "\n"
+    )
+    mgr = _mgr_for(tmp_path, body)
+    nc = mgr.read("a.md", section="Repeat")
+    assert "first occurrence body" in nc.content
+    assert "second occurrence body" not in nc.content
+    # Not adjacent: the index's contiguous run stops at "Middle", so nothing of this run is left out.
+    assert "not returned" not in nc.content
+
+
+def test_section_read_announces_an_adjacent_same_titled_section_left_out(tmp_path):
+    body = (
+        "---\nk: v\n---\n"
+        "# A\n"
+        + "\n".join(["intro"] * 16)
+        + "\n## Repeat\n"
+        + "\n".join(["first occurrence body"] * 6)
+        + "\n## Repeat\n"
+        + "\n".join(["second occurrence body"] * 6)
+        + "\n"
+    )
+    mgr = _mgr_for(tmp_path, body)
+    nc = mgr.read("a.md", section="Repeat")
+    assert "first occurrence body" in nc.content
+    assert "second occurrence body" not in nc.content
+    assert "[section 'Repeat': 1 more chunk(s) under this title not returned" in nc.content
+    assert "read('a.md')" in nc.content
+
+
+def test_section_read_leaves_out_an_adjacent_long_same_titled_section_and_says_so(tmp_path):
+    """The later same-titled section is itself split: none of its chunks is taken for a continuation."""
+    first = "\n\n".join(f"first para {n} " + " ".join(["one"] * 25) for n in range(4))
+    second = "\n\n".join(f"second para {n} " + " ".join(["two"] * 25) for n in range(6))
+    body = "---\nk: v\n---\n# A\n" + "\n".join(["intro"] * 31) + "\n## Repeat\n\n" + first + "\n## Repeat\n\n" + second + "\n"
+    (tmp_path / "a.md").write_text(body, encoding="utf-8")
+    fts = FTSIndex(db_path=":memory:")
+    chunker = HeadingChunker(max_chunk_words=60)
+    for note in scan_directory(tmp_path, chunk_strategy=chunker):
+        fts.upsert_note(note)
+    mgr = DocumentManager(fts=fts, source_dir=tmp_path, write_lock=threading.RLock(), chunk_strategy=chunker)
+    chunks = fts.get_section_chunks("a.md", "Repeat")
+    nc = mgr.read("a.md", section="Repeat")
+    assert "first para 3" in nc.content
+    assert "second para" not in nc.content
+    n_first = sum(1 for c in chunks if "first para" in c["content"])
+    assert n_first > 1 and len(chunks) - n_first > 1, "both sections must be split, or the test proves nothing"
+    assert f"[section 'Repeat': {len(chunks) - n_first} more chunk(s) under this title not returned" in nc.content
