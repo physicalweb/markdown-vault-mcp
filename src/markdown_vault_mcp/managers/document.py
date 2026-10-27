@@ -353,6 +353,29 @@ class DocumentManager:
             out.append(c)
         return out, None
 
+    def missing_path_hint(self, path: str) -> str:
+        """Say where a document named by a path that is not in the index might be (AGO-189 defect 4).
+
+        A wrong path ("design/x.md" for "docs/design/x.md") and a missing document used to read
+        alike, so a read that missed on the path read as evidence the document does not exist. This
+        names the indexed documents the path plausibly meant: those whose path ends with it, then
+        those with the same file name. With none, it says how paths are written. Miss path only.
+        """
+        wanted = path.strip().lstrip("/")
+        name = Path(wanted).name.lower()
+        indexed = [row["path"] for row in self._fts.list_notes()]
+        suffix = [p for p in indexed if p.endswith("/" + wanted) or p.lower() == wanted.lower()]
+        same_name = [p for p in indexed if Path(p).name.lower() == name and p not in suffix]
+        candidates = suffix + same_name
+        if not candidates:
+            return (
+                " Paths are relative to the collection root and case-sensitive — look the path up "
+                "with search or list_documents."
+            )
+        shown = ", ".join(repr(p) for p in candidates[:5])
+        more = f" (and {len(candidates) - 5} more)" if len(candidates) > 5 else ""
+        return f" Indexed documents this path may mean: {shown}{more}."
+
     def _read_section(self, path: str, heading: str) -> NoteContent:
         """Return a NoteContent containing only the named section's chunk.
 
@@ -376,9 +399,18 @@ class DocumentManager:
         """
         doc_row = self._fts.get_note(path)
         if doc_row is None:
+            # Say WHICH absence (AGO-189 defect 4): "not indexed or does not exist" read the same for a
+            # wrong path as for a missing document, and so corroborated a false absence.
+            abs_path = (self._source_dir / path).resolve()
+            if abs_path.is_relative_to(self._source_dir.resolve()) and abs_path.is_file():
+                raise ValueError(
+                    f"Section '{heading}' cannot be read from {path}: the file exists but is not in "
+                    "the index yet (the index may be behind the file). Read it without section= "
+                    "for the whole document."
+                )
             raise ValueError(
-                f"Section '{heading}' not found in document {path}: "
-                "document is not indexed or does not exist"
+                f"Document not found: {path} — no document at this path, so no section "
+                f"'{heading}'.{self.missing_path_hint(path)}"
             )
         chunks = self._fts.get_section_chunks(path, heading)
         if not chunks:

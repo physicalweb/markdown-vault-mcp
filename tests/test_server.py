@@ -312,6 +312,17 @@ class TestReadTool:
         assert result.isError is True
 
     @pytest.mark.usefixtures("_mcp_env")
+    async def test_read_wrong_path_names_the_indexed_document(self) -> None:
+        """AGO-189 defect 4: a path missing its folder is not the document's absence."""
+        server = make_server()
+        async with Client(server) as client:
+            result = await client.call_tool_mcp("read", {"path": "nested.md"})
+        assert result.isError is True
+        text = result.content[0].text
+        assert "Document not found: nested.md" in text
+        assert "'subfolder/nested.md'" in text
+
+    @pytest.mark.usefixtures("_mcp_env")
     async def test_read_with_frontmatter(self) -> None:
         server = make_server()
         async with Client(server) as client:

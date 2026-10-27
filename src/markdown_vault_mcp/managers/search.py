@@ -127,6 +127,19 @@ class _GroupableRow(Protocol):
 _GroupableT = TypeVar("_GroupableT", bound=_GroupableRow)
 
 
+def _chunk_key(row: Any) -> tuple[str, str | None, int]:
+    """Identify one indexed chunk: ``(path, heading, section_id)``.
+
+    The heading alone does not: a section longer than ``max_chunk_words`` is
+    stored as several chunks under one heading, and keying snippets by
+    ``(path, heading)`` returned the same snippet for every one of them —
+    byte-identical sections differing only in score (AGO-189 defect 3).
+    ``section_id`` is ``0`` on a legacy index, where this degrades to the
+    old per-heading key.
+    """
+    return (row.path, row.heading, row.section_id)
+
+
 def _group_by_path(
     rows: list[_GroupableT], *, chunks_per_file: int, file_limit: int
 ) -> list[list[_GroupableT]]:
@@ -614,9 +627,9 @@ class SearchManager:
 
         if snippet_words > 0:
             survivor_rows = [r for g in groups for r in g]
-            survivor_keys = {(r.path, r.heading) for r in survivor_rows}
+            survivor_keys = {_chunk_key(r) for r in survivor_rows}
             snippet_rows = [
-                fr for fr in downweighted if (fr.path, fr.heading) in survivor_keys
+                fr for fr in downweighted if _chunk_key(fr) in survivor_keys
             ]
             snippets_by_key = self._fetch_snippet_map(
                 query,
@@ -633,7 +646,7 @@ class SearchManager:
         for group in groups:
             sections: list[SectionHit] = []
             for r in group:
-                key = (r.path, r.heading)
+                key = _chunk_key(r)
                 if key in snippets_by_key:
                     content = snippets_by_key[key]
                 elif snippet_words > 0:
@@ -668,10 +681,13 @@ class SearchManager:
         folder: str | None,
         filters: dict[str, str] | None,
         candidate_limit: int,
-    ) -> dict[tuple[str, str | None], str]:
+    ) -> dict[tuple[str, str | None, int], str]:
         """Re-query FTS with snippet projection, restricted to survivor paths.
 
-        Returns a ``{(path, heading): snippet}`` map. Pool is widened to at
+        Returns a ``{(path, heading, section_id): snippet}`` map — keyed per
+        CHUNK, not per heading: the chunks of one long section share its
+        heading, and a per-heading key gave every one of them the same
+        snippet (AGO-189 defect 3). Pool is widened to at
         least the caller's initial ``candidate_limit`` (so the snippet re-query
         is never narrower than the ranking query) and scoped via the same
         ``folder`` / ``filters`` so a narrowly-scoped initial search doesn't
@@ -700,12 +716,8 @@ class SearchManager:
             filters=filters,
             snippet_words=snippet_words,
         )
-        wanted = {(s.path, s.heading) for s in survivors}
-        return {
-            (r.path, r.heading): r.content
-            for r in rows
-            if (r.path, r.heading) in wanted
-        }
+        wanted = {_chunk_key(s) for s in survivors}
+        return {_chunk_key(r): r.content for r in rows if _chunk_key(r) in wanted}
 
     def _semantic_search(
         self,
@@ -909,13 +921,11 @@ class SearchManager:
         keyword_survivors = [
             r for g in groups for r in g if (r.path, r.heading) in keyword_keys
         ]
-        snippet_map: dict[tuple[str, str | None], str] = {}
+        snippet_map: dict[tuple[str, str | None, int], str] = {}
         if snippet_words > 0 and keyword_survivors:
-            survivor_keys = {(r.path, r.heading) for r in keyword_survivors}
+            survivor_keys = {_chunk_key(r) for r in keyword_survivors}
             survivor_fts_rows = [
-                fts_r
-                for fts_r in fts_results
-                if (fts_r.path, fts_r.heading) in survivor_keys
+                fts_r for fts_r in fts_results if _chunk_key(fts_r) in survivor_keys
             ]
             snippet_map = self._fetch_snippet_map(
                 query,
@@ -932,8 +942,8 @@ class SearchManager:
             for gr in group:
                 key = (gr.path, gr.heading)
                 meta = chunk_meta[key]
-                if key in snippet_map:
-                    content = snippet_map[key]
+                if _chunk_key(gr) in snippet_map:
+                    content = snippet_map[_chunk_key(gr)]
                 elif snippet_words > 0:
                     content = _compute_snippet_for_semantic(
                         meta["content"], query, snippet_words=snippet_words

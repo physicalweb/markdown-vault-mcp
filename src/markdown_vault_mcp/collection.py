@@ -467,6 +467,14 @@ class Collection:
         self._ensure_initialized()
         return self._doc_mgr.read(path, section=section)
 
+    def missing_path_hint(self, path: str) -> str:
+        """Return a hint naming the indexed documents a not-found *path* may mean (AGO-189).
+
+        Empty-safe for any path; the text starts with a space so it appends to an error message.
+        """
+        self._ensure_initialized()
+        return self._doc_mgr.missing_path_hint(path)
+
     def list(
         self,
         *,

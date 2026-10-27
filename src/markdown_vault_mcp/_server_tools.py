@@ -429,7 +429,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             return asdict(attachment)
         note = await asyncio.to_thread(collection.read, path, section=section)
         if note is None:
-            raise ValueError(f"Document not found: {path}")
+            # Name the documents a wrong path may mean, so a miss on the path does not read as
+            # the document's absence (AGO-189 defect 4).
+            hint = await asyncio.to_thread(collection.missing_path_hint, path)
+            raise ValueError(f"Document not found: {path}.{hint}")
         return asdict(note)
 
     @mcp.tool(
