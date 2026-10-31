@@ -892,8 +892,16 @@ class GitWriteStrategy:
             )
             conflicting = [f for f in result.stdout.strip().splitlines() if f]
             if not conflicting:
-                # No conflicts — rebase may have stopped for another reason.
-                break
+                # No conflicts — the rebase stopped for another reason.  Say
+                # so, rather than falling through to the cap message below
+                # (AGO-641: a stop with no unmerged file was logged as fifty
+                # conflicts).
+                logger.error(
+                    "Git pull: rebase stopped with no unmerged file; "
+                    "nothing to resolve (git status: %s)",
+                    self._rebase_status(root, env),
+                )
+                return list(saved.items())
 
             for rel_path in conflicting:
                 # Save the MCP version (the commit being rebased).
@@ -944,11 +952,23 @@ class GitWriteStrategy:
             # returncode != 0 means the next commit also has conflicts —
             # loop around and resolve again.
 
-        # Exhausted iterations or no conflicting files after non-zero continue.
+        # Exhausted iterations: every pass resolved files and the next commit
+        # conflicted again.
         logger.error(
             "Git pull: conflict resolution loop exceeded %d iterations", max_iterations
         )
         return list(saved.items())
+
+    def _rebase_status(self, root: str, env: dict[str, str] | None) -> str:
+        """Return ``git status``'s first lines, for a rebase-stop log line."""
+        status = subprocess.run(
+            ["git", "-C", root, "status"],
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+        lines = (status.stdout or status.stderr or "").strip().splitlines()
+        return " | ".join(lines[:5]) or "(empty)"
 
     def _resolve_conflicts_safely(
         self,

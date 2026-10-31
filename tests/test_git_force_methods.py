@@ -690,6 +690,46 @@ class TestForceMethodsErrorBranches:
             f"expected max_iterations ERROR log; got: {log_messages}"
         )
 
+    def test_rebase_stop_without_unmerged_file_is_not_logged_as_the_cap(
+        self,
+        git_repo_pair: GitRepoPair,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """No unmerged file: log the stop itself, not "exceeded 50" (AGO-641)."""
+        import logging
+        import subprocess as _real_subprocess
+
+        from markdown_vault_mcp.git import GitWriteStrategy
+        from markdown_vault_mcp.git import subprocess as git_subprocess
+
+        strategy = GitWriteStrategy(
+            enable_pull=True,
+            enable_push=False,
+            repo_path=git_repo_pair.local_path,
+        )
+
+        real_run = _real_subprocess.run
+        continues: list[object] = []
+
+        def _patched_run(args: list[str], **kwargs: object) -> object:
+            if isinstance(args, list) and "rebase" in args and "--continue" in args:
+                continues.append(args)
+            return real_run(args, **kwargs)
+
+        monkeypatch.setattr(git_subprocess, "run", _patched_run)
+
+        with caplog.at_level(logging.ERROR, logger="markdown_vault_mcp.git"):
+            saved = strategy._resolve_rebase_conflicts(
+                git_repo_pair.local_path, env=None
+            )
+
+        assert saved == []
+        assert continues == []  # nothing resolved, so no continue attempted
+        log_messages = [r.getMessage() for r in caplog.records]
+        assert not any("exceeded" in msg for msg in log_messages), log_messages
+        assert any("no unmerged file" in msg for msg in log_messages), log_messages
+
     def test_force_pull_non_fast_forward_with_conflicts_when_abort_fails(
         self, git_repo_pair: GitRepoPair, monkeypatch: pytest.MonkeyPatch
     ) -> None:
