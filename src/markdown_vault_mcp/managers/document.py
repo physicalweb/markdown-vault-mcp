@@ -1049,16 +1049,20 @@ class DocumentManager:
         *,
         update_links: bool = False,
     ) -> RenameResult:
-        """Rename or move a document or attachment.
+        """Rename or move a document, an attachment or a folder.
 
         Renames the file on disk.  For ``.md`` documents, also updates FTS
         and embedding index entries.  For attachments, only the file is moved
         (no index update).  Creates intermediate directories for *new_path*
         as needed.
 
-        When *update_links* is ``True`` and *old_path* is a ``.md`` document,
-        every document that links to *old_path* is also updated so its links
-        point to *new_path*.
+        When *old_path* is an existing folder, the whole folder moves with
+        its tree kept (see :meth:`_rename_folder`); every ``.md`` document
+        under it is re-indexed at its new path.
+
+        When *update_links* is ``True`` and *old_path* is a ``.md`` document
+        (or a folder, for each ``.md`` document under it), every document
+        that links to it is also updated so its links point to the new path.
 
         Args:
             old_path: Current relative document or attachment path.
@@ -1081,11 +1085,15 @@ class DocumentManager:
             DocumentExistsError: If *new_path* already exists.
             ConcurrentModificationError: If *if_match* is provided and does
                 not match the current hash of *old_path*.
-            ValueError: If either path escapes the source directory, or (for
+            ValueError: If either path escapes the source directory, (for
                 non-.md paths) has an extension not in the attachment
-                allowlist.
+                allowlist, or (for a folder) *new_path* is inside *old_path*.
         """
         self._check_writable()
+        if self._is_folder(old_path):
+            return self._rename_folder(
+                old_path, new_path, if_match, update_links=update_links
+            )
         updated_links = 0
         backlink_callbacks: list[tuple[Path, str]] = []
 
@@ -1123,7 +1131,7 @@ class DocumentManager:
                 callback_content = new_abs.read_text(encoding="utf-8")
 
                 backlink_callbacks = self._update_backlinks(
-                    old_path, new_path, backlinks
+                    {old_path: new_path}, {old_path: backlinks}
                 )
                 updated_links = len(backlink_callbacks)
                 self._fts.resolve_vault_wikilinks()
@@ -1159,17 +1167,128 @@ class DocumentManager:
             updated_links=updated_links,
         )
 
-    def _update_backlinks(
+    def _is_folder(self, path: str) -> bool:
+        """Return True if *path* names an existing folder inside the vault.
+
+        Args:
+            path: Relative path to check.
+
+        Raises:
+            ValueError: If *path* is a folder outside the source directory.
+        """
+        abs_path = (self._source_dir / path).resolve()
+        if not abs_path.is_dir():
+            return False
+        if not abs_path.is_relative_to(self._source_dir.resolve()):
+            raise ValueError(f"Path traversal detected: {path}")
+        return True
+
+    def _rename_folder(
         self,
         old_path: str,
         new_path: str,
-        backlinks: list[dict[str, Any]],
-    ) -> list[tuple[Path, str]]:
-        """Rewrite source files that link to *old_path* to point to *new_path*.
+        if_match: str | None,
+        *,
+        update_links: bool,
+    ) -> RenameResult:
+        """Move a whole folder, keeping its tree (the folder case of rename).
 
-        Called by :meth:`rename` after the file has already been moved on disk
-        and the FTS index updated.  Each source file is read, all of its links
-        to *old_path* are rewritten in a single pass, then written back.
+        Modelled on the MCP reference filesystem server's ``move_file``,
+        which moves files and directories alike.  The folder is moved in one
+        filesystem move; each ``.md`` document under it is re-indexed at its
+        new path, and with *update_links* every link to a moved document is
+        rewritten.  One write callback fires for the folder, so the git
+        strategy makes one commit for the move (the link rewrites are staged
+        with it); the per-source ``edit`` callbacks then find nothing new.
+
+        Args:
+            old_path: Existing folder, relative to the vault.
+            new_path: Target folder path; must not exist.
+            if_match: Must be ``None``: an etag names one file, not a folder.
+            update_links: Rewrite links to every moved ``.md`` document.
+
+        Returns:
+            :class:`~markdown_vault_mcp.types.RenameResult` with
+            *updated_links* counting source documents rewritten.
+
+        Raises:
+            DocumentExistsError: If *new_path* already exists.
+            ValueError: If *old_path* is the vault root, *new_path* escapes
+                the vault or lies inside *old_path*, or *if_match* is given.
+        """
+        root = self._source_dir.resolve()
+        old_abs = (self._source_dir / old_path).resolve()
+        new_abs = (self._source_dir / new_path).resolve()
+        if old_abs == root:
+            raise ValueError("Cannot move the vault root")
+        if not new_abs.is_relative_to(root):
+            raise ValueError(f"Path traversal detected: {new_path}")
+        if new_abs == old_abs or new_abs.is_relative_to(old_abs):
+            raise ValueError(
+                f"Cannot move folder {old_path} into its own subtree: {new_path}"
+            )
+        if if_match is not None:
+            raise ValueError(
+                "if_match applies to a single file; omit it when moving a folder"
+            )
+
+        old_rel = old_abs.relative_to(root).as_posix()
+        new_rel = new_abs.relative_to(root).as_posix()
+
+        with self._write_lock:
+            if new_abs.exists():
+                raise DocumentExistsError(f"Target already exists: {new_path}")
+
+            moves: dict[str, str] = {}
+            for file_abs in sorted(old_abs.rglob("*.md")):
+                if not file_abs.is_file():
+                    continue
+                inner = file_abs.relative_to(old_abs).as_posix()
+                moves[f"{old_rel}/{inner}"] = f"{new_rel}/{inner}"
+
+            backlinks: dict[str, list[dict[str, Any]]] = {}
+            if update_links:
+                for old_md in moves:
+                    backlinks[old_md] = self._fts.get_backlinks(old_md)
+
+            new_abs.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(old_abs), str(new_abs))
+
+            for old_md, new_md in moves.items():
+                self._fts.delete_by_path(old_md)
+                self._on_vector_dirty(old_md)
+                if self._is_path_excluded(new_md):
+                    continue
+                note = parse_note(
+                    self._source_dir / new_md, self._source_dir, self._chunk_strategy
+                )
+                self._fts.upsert_note(note)
+                self._on_vector_dirty(note.path)
+
+            backlink_callbacks = self._update_backlinks(moves, backlinks)
+            self._fts.resolve_vault_wikilinks()
+
+        self._on_write_callback(new_abs, "", "rename")
+        for src_abs, src_content in backlink_callbacks:
+            self._on_write_callback(src_abs, src_content, "edit")
+
+        return RenameResult(
+            old_path=old_path,
+            new_path=new_path,
+            updated_links=len(backlink_callbacks),
+        )
+
+    def _update_backlinks(
+        self,
+        moves: dict[str, str],
+        backlinks: dict[str, list[dict[str, Any]]],
+    ) -> list[tuple[Path, str]]:
+        """Rewrite source files that link to moved documents.
+
+        Called by :meth:`rename` after the files have already been moved on
+        disk and the FTS index updated.  Each source file is read, all of its
+        links to moved documents are rewritten in a single pass, then written
+        back.  A source that itself moved is read at its new location.
 
         This method must be called while ``_write_lock`` is held.  It does
         **not** fire write callbacks itself — callers must do so after
@@ -1177,27 +1296,23 @@ class DocumentManager:
         pairs.
 
         Args:
-            old_path: Vault-relative path that was renamed (the old location).
-            new_path: Vault-relative path after the rename (the new location).
-            backlinks: Rows returned by :meth:`FTSIndex.get_backlinks` before
-                the rename.
+            moves: Old vault-relative path → new path, for every document
+                that moved.
+            backlinks: For each old path in *moves*, the rows returned by
+                :meth:`FTSIndex.get_backlinks` before the move.
 
         Returns:
             List of ``(abs_path, new_content)`` pairs for every source
             document that was successfully rewritten.
         """
-        if not backlinks:
-            return []
-
-        by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for row in backlinks:
-            by_source[row["source_path"]].append(row)
-
-        if old_path in by_source:
-            by_source[new_path] = by_source.pop(old_path)
+        by_source: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
+        for target_old, rows in backlinks.items():
+            for row in rows:
+                source = moves.get(row["source_path"], row["source_path"])
+                by_source[source].append((target_old, row))
 
         pending_callbacks: list[tuple[Path, str]] = []
-        for source_path, rows in by_source.items():
+        for source_path, targeted_rows in by_source.items():
             try:
                 source_abs = self._validate_path(source_path)
                 if not source_abs.is_file():
@@ -1206,15 +1321,15 @@ class DocumentManager:
                         source_path,
                     )
                     continue
-                content = source_abs.read_text(encoding="utf-8")
-                for row in rows:
+                original = content = source_abs.read_text(encoding="utf-8")
+                for target_old, row in targeted_rows:
                     new_raw = _compute_new_raw_target(
                         row["link_type"],
                         row["raw_target"],
                         row["fragment"],
-                        new_path,
+                        moves[target_old],
                         source_path=source_path,
-                        old_path=old_path,
+                        old_path=target_old,
                     )
                     content = _apply_link_replacement(
                         content,
@@ -1222,6 +1337,10 @@ class DocumentManager:
                         row["raw_target"],
                         new_raw,
                     )
+                if content == original:
+                    # Every link here still resolves as written (a relative
+                    # link inside a moved folder): nothing to rewrite.
+                    continue
                 with tempfile.NamedTemporaryFile(
                     dir=source_abs.parent,
                     mode="w",

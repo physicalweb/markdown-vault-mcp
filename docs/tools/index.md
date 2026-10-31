@@ -31,7 +31,7 @@ markdown-vault-mcp exposes MCP tools across several categories. Write tools are 
 | [`write`](#write) | Write | Create or overwrite a document or attachment |
 | [`edit`](#edit) | Write | Replace a unique text span in a document |
 | [`delete`](#delete) | Write | Delete a document or attachment |
-| [`rename`](#rename) | Write | Rename/move a document or attachment |
+| [`rename`](#rename) | Write | Rename/move a document, attachment or folder |
 | [`fetch`](#fetch) | Write | Download from URL and save to vault |
 | [`create_download_link`](#create_download_link) | Write | Generate a one-time download URL for a vault file |
 | [`create_upload_link`](#create_upload_link) | Write | Mint a one-time HTTPS POST URL for pushing bytes into the vault |
@@ -307,14 +307,18 @@ Permanently delete a document or attachment. For `.md` documents, also removes f
 
 Rename a document or attachment, or move it to a different folder. Parent directories for the new path are created automatically.
 
+When `old_path` is a folder, the whole folder moves with its tree kept, in one commit under git. With `update_links=true`, links in other documents to every moved note are rewritten. A move onto an existing path, or into the folder's own subtree, is refused; `if_match` is not accepted for a folder.
+
 **Parameters:**
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `old_path` | string | Current relative path |
+| `old_path` | string | Current relative path of a document, attachment or folder |
 | `new_path` | string | Target relative path. Fails if `new_path` already exists |
+| `if_match` | string | Optional etag from a previous `read` (files only) |
+| `update_links` | bool | Rewrite links in other documents to the moved note(s). Default `false` |
 
-**Returns:** `{"old_path": "drafts/idea.md", "new_path": "projects/idea.md"}`
+**Returns:** `{"old_path": "drafts/idea.md", "new_path": "projects/idea.md", "updated_links": 0}`
 
 ### `fetch`
 

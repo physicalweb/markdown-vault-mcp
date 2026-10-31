@@ -660,6 +660,32 @@ class TestRenameTool:
         assert data["new_path"] == "renamed.md"
 
     @pytest.mark.usefixtures("_mcp_env_writable")
+    async def test_rename_moves_a_folder(self, vault_path: Path) -> None:
+        """A folder old_path moves the whole tree (AGO-641)."""
+        server = make_server()
+        async with Client(server) as client:
+            result = await client.call_tool(
+                "rename",
+                {
+                    "old_path": "subfolder",
+                    "new_path": "moved/subfolder",
+                    "update_links": True,
+                },
+            )
+        assert result.data["new_path"] == "moved/subfolder"
+        assert not (vault_path / "subfolder").exists()
+        assert any((vault_path / "moved" / "subfolder").rglob("*.md"))
+
+    @pytest.mark.usefixtures("_mcp_env_writable")
+    async def test_rename_folder_into_itself_returns_error(self) -> None:
+        server = make_server()
+        async with Client(server) as client:
+            result = await client.call_tool_mcp(
+                "rename", {"old_path": "subfolder", "new_path": "subfolder/inner"}
+            )
+        assert result.isError is True
+
+    @pytest.mark.usefixtures("_mcp_env_writable")
     async def test_rename_nonexistent_returns_error(self) -> None:
         server = make_server()
         async with Client(server) as client:

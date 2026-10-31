@@ -1520,20 +1520,25 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         update_links: bool = False,
         collection: Collection = Depends(get_collection),
     ) -> dict[str, Any]:
-        """Rename or move a document or attachment. When renaming a .md note,
-        always pass update_links=True to rewrite links in other documents
-        that point to the old path — omitting this leaves those links broken.
+        """Rename or move a document, an attachment or a whole folder. When
+        renaming a .md note or a folder, always pass update_links=True to
+        rewrite links in other documents that point to the old path(s) —
+        omitting this leaves those links broken.
 
         For .md documents: the file and its search index entries are updated
         immediately — do not call 'reindex' afterward.
         For attachments: only the file is moved (no index update needed).
+        For a folder: everything under it moves with its tree kept, every
+        note in it is re-indexed, and the move is one commit. Refused when
+        new_path exists or lies inside old_path.
         Parent directories for new_path are created automatically.
 
         Args:
-            old_path: Current relative path (e.g. "drafts/idea.md"
-                or "assets/old.png").
-            new_path: Target relative path (e.g. "projects/idea.md"
-                or "assets/new.png"). Fails if new_path already exists.
+            old_path: Current relative path (e.g. "drafts/idea.md",
+                "assets/old.png", or a folder such as "drafts").
+            new_path: Target relative path (e.g. "projects/idea.md",
+                "assets/new.png" or "archive/drafts"). Fails if new_path
+                already exists.
             participant_id: Your participant identity (e.g. "ki", "lin",
                 "arnon", "cc"). Honor-system trust; the server uses this
                 to attribute the git commit author. Optional in the schema:
@@ -1543,9 +1548,11 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             if_match: Optional etag obtained from a previous 'read' call
                 for old_path. When provided, the rename only proceeds if
                 the file has not been modified since that read (optimistic
-                concurrency). Omit to rename unconditionally.
+                concurrency). Omit to rename unconditionally. Not accepted
+                for a folder.
             update_links: When True, all .md documents that link to old_path
-                are also updated so their links point to new_path. Replacement
+                (or, for a folder, to any note under it) are also updated so
+                their links point to the new path. Replacement
                 is best-effort — failures are logged but do not prevent the
                 rename. Default False; set True whenever renaming a .md note
                 (omitting this leaves backlinks pointing to the old path).
@@ -1557,7 +1564,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         Raises:
             DocumentNotFoundError: If old_path does not exist.
             DocumentExistsError: If new_path already exists.
-            ValueError: If the path fails traversal validation.
+            ValueError: If the path fails traversal validation, or a folder
+                would move into its own subtree.
             McpError: If if_match is provided and the file has been modified
                 (ConcurrentModificationError).
         """

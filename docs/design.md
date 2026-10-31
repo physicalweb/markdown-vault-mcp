@@ -1052,6 +1052,21 @@ source-directory-relative links (e.g. `../notes/target.md`) are rewritten
 with the correct new relative path from the source file's directory.
 `update_links` is silently ignored for attachments (non-`.md` files).
 
+**Folder moves** (AGO-641): when `old_path` is an existing folder, `rename()`
+moves the whole folder in one filesystem move, keeping its tree (attachments
+included), the way the MCP reference filesystem server's `move_file` moves a
+directory. Every `.md` document under it is re-indexed at its new path, and
+with `update_links=True` every link to a moved document is rewritten as above
+(a source that itself moved is rewritten at its new location; a source whose
+text would not change, such as a relative link between two moved documents,
+is left alone and not counted). `on_write` fires once, with the new folder
+path, so the git strategy makes one commit for the move. Refused:
+`DocumentExistsError` when `new_path` exists; `ValueError` when `new_path` is
+`old_path` or inside it, when `old_path` is the vault root, when either path
+leaves the vault, or when `if_match` is given (an etag names one file).
+Relative links *from* moved documents to documents outside the folder are not
+rewritten (the same as a single-file move to another folder).
+
 **`list()` pattern parameter**: if provided, `pattern` is a Unix glob matched
 against the relative path using `fnmatch.fnmatch()`. Example:
 `pattern="Journal/*.md"` returns only documents in the Journal folder.
@@ -1067,12 +1082,13 @@ WriteCallback = Callable[[Path, str, Literal["write", "edit", "delete", "rename"
 
 - `path`: absolute path on disk.
   - For `write`, `edit`: the file's final path after the operation.
-  - For `rename`: the **new** path (old path is gone).
+  - For `rename`: the **new** path (old path is gone); for a folder move,
+    the new folder.
   - For `delete`: the path before deletion (file no longer exists on disk).
 - `content`: updated file content as a string.
   - For `delete`: empty string `""` (file no longer exists).
   - For `rename` of a note (`.md`): the full file content at the new path.
-  - For `rename` of an attachment: empty string `""` (binary content).
+  - For `rename` of an attachment or a folder: empty string `""`.
   - For `write` and `edit` of a note (`.md`): the new file content.
   - For `write` of an attachment: empty string `""` (binary content cannot be passed as a string).
 - `operation`: the operation that triggered the callback.

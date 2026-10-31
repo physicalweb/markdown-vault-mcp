@@ -372,7 +372,7 @@ markdown-vault-mcp reindex [--source-dir PATH] [--index-path PATH]
 | `write` | Create or overwrite a document or attachment |
 | `edit` | Replace text in a document — exact match, line-range, or scoped match with normalized fallback |
 | `delete` | Delete a document or attachment and its index entries |
-| `rename` | Rename/move a document or attachment, updating all index entries; pass `update_links=true` to also rewrite backlinks in other notes |
+| `rename` | Rename/move a document, attachment or whole folder, updating all index entries; pass `update_links=true` to also rewrite backlinks in other notes |
 | `list_documents` | List indexed documents; pass `include_attachments=true` to also list non-markdown files |
 | `list_folders` | List all folder paths in the vault |
 | `list_tags` | List all unique frontmatter tag values |

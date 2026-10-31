@@ -1251,9 +1251,10 @@ class Collection:
         *,
         update_links: bool = False,
     ) -> RenameResult:
-        """Rename or move a document or attachment.
+        """Rename or move a document, an attachment or a folder.
 
-        Moves the file on disk and updates the FTS / vector indices.  When
+        Moves the file (or the whole folder, keeping its tree) on disk and
+        updates the FTS / vector indices.  When
         *update_links* is ``True``, all wikilinks and markdown links in other
         documents that pointed to *old_path* are rewritten to *new_path*.
 
@@ -1273,8 +1274,9 @@ class Collection:
             ConcurrentModificationError: If *if_match* is provided and does
                 not match.
             DocumentNotFoundError: If *old_path* does not exist.
+            DocumentExistsError: If *new_path* already exists.
             ValueError: If *old_path* or *new_path* escapes the source
-                directory.
+                directory, or a folder would move into its own subtree.
         """
         self._ensure_initialized()
         return self._doc_mgr.rename(
