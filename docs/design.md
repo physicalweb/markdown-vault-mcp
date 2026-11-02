@@ -1360,6 +1360,7 @@ For MCP server deployment:
 | `MARKDOWN_VAULT_MCP_INSTRUCTIONS` | System-level instructions for LLM context | generic description |
 | `MARKDOWN_VAULT_MCP_SOURCE_DIR` | Path to markdown files | required |
 | `MARKDOWN_VAULT_MCP_READ_ONLY` | Disable write tools | `true` |
+| `MARKDOWN_VAULT_MCP_WRITE_PREFIX` | Folder every write must stay inside; reads stay vault-wide | unset (no restriction) |
 | `MARKDOWN_VAULT_MCP_INDEX_PATH` | SQLite index path | in-memory |
 | `MARKDOWN_VAULT_MCP_EMBEDDINGS_PATH` | Embeddings directory | disabled |
 | `MARKDOWN_VAULT_MCP_INDEXED_FIELDS` | Comma-separated frontmatter fields to index | none |

@@ -194,6 +194,7 @@ All configuration is via environment variables with the `MARKDOWN_VAULT_MCP_` pr
 |----------|---------|----------|-------------|
 | `MARKDOWN_VAULT_MCP_SOURCE_DIR` | — | **Yes** | Path to the markdown vault directory |
 | `MARKDOWN_VAULT_MCP_READ_ONLY` | `true` | No | Set to `false` to enable write operations |
+| `MARKDOWN_VAULT_MCP_WRITE_PREFIX` | — | No | Vault-relative folder every write must stay inside (e.g. `docs`): `write`, `edit`, `delete`, both paths of `rename`, `fetch` and uploads refuse a path outside it, naming `<prefix>/<path>` when that folder exists. Reads, search and listing stay vault-wide. Unset means no restriction |
 | `MARKDOWN_VAULT_MCP_INDEX_PATH` | in-memory | No | Path to the SQLite FTS5 index file; set for persistence across restarts |
 | `MARKDOWN_VAULT_MCP_EMBEDDINGS_PATH` | disabled | No | Path to the numpy embeddings file; required to enable semantic search |
 | `MARKDOWN_VAULT_MCP_STATE_PATH` | `{SOURCE_DIR}/.markdown_vault_mcp/state.json` | No | Path to the change-tracking state file |

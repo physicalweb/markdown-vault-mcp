@@ -133,6 +133,9 @@ class Collection:
             ``0`` disables the limit (default ``1.0``).
         max_note_read_bytes: Maximum bytes returned by full-document reads.
             ``0`` disables the limit (default ``262144``, i.e. 256 KB).
+        write_prefix: Vault-relative folder every write must stay inside
+            (e.g. ``"docs"``).  ``None`` (default) means no restriction.
+            Reads are never restricted.
     """
 
     def __init__(
@@ -154,6 +157,7 @@ class Collection:
         attachment_extensions: list[str] | None = None,
         max_attachment_size_mb: float = 1.0,
         max_note_read_bytes: int = 262144,
+        write_prefix: str | None = None,
         chunks_per_file: int = 2,
         snippet_words: int = 200,
         length_downweight_alpha: float = 0.25,
@@ -186,6 +190,7 @@ class Collection:
         self._attachment_extensions = attachment_extensions
         self._max_attachment_size_mb = max_attachment_size_mb
         self._max_note_read_bytes = max_note_read_bytes
+        self._write_prefix = write_prefix
 
         # Default state path: {source_dir}/.markdown_vault_mcp/state.json
         if state_path is None:
@@ -982,6 +987,18 @@ class Collection:
         """Resolve and validate a non-.md attachment path."""
         return self._doc_mgr._validate_attachment_path(path)
 
+    def check_write_prefix(self, path: str) -> None:
+        """Refuse a write outside the configured ``write_prefix``.
+
+        See :func:`markdown_vault_mcp.utils.check_write_prefix`.
+
+        Raises:
+            ValueError: If *path* is not inside the write prefix.
+        """
+        from markdown_vault_mcp.utils import check_write_prefix
+
+        check_write_prefix(path, self._write_prefix, self._source_dir)
+
     def _ensure_callback_worker(self) -> None:
         """Start the background write-callback worker if not running."""
         with self._callback_worker_lock:
@@ -1130,6 +1147,7 @@ class Collection:
         already validated against ``MARKDOWN_VAULT_MCP_UPLOAD_MAX_BYTES``);
         leave ``False`` for base64 callers of the MCP ``write`` tool.
         """
+        self.check_write_prefix(path)
         self._ensure_initialized()
         return self._doc_mgr.write_attachment(
             path, content, if_match=if_match, skip_size_cap=skip_size_cap
@@ -1163,8 +1181,10 @@ class Collection:
             ReadOnlyError: If the collection is read-only.
             ConcurrentModificationError: If *if_match* is provided and does
                 not match the current file hash.
-            ValueError: If *path* escapes the source directory.
+            ValueError: If *path* escapes the source directory or lies
+                outside the write prefix.
         """
+        self.check_write_prefix(path)
         self._ensure_initialized()
         return self._awaiting_push(
             lambda: self._doc_mgr.write(
@@ -1206,8 +1226,10 @@ class Collection:
             ReadOnlyError: If the collection is read-only.
             ConcurrentModificationError: If *if_match* is provided and does
                 not match.
-            ValueError: If *path* escapes the source directory.
+            ValueError: If *path* escapes the source directory or lies
+                outside the write prefix.
         """
+        self.check_write_prefix(path)
         self._ensure_initialized()
         return self._awaiting_push(
             lambda: self._doc_mgr.edit(
@@ -1239,7 +1261,9 @@ class Collection:
             ConcurrentModificationError: If *if_match* is provided and does
                 not match.
             DocumentNotFoundError: If *path* does not exist.
+            ValueError: If *path* lies outside the write prefix.
         """
+        self.check_write_prefix(path)
         self._ensure_initialized()
         return self._doc_mgr.delete(path, if_match=if_match)
 
@@ -1276,8 +1300,11 @@ class Collection:
             DocumentNotFoundError: If *old_path* does not exist.
             DocumentExistsError: If *new_path* already exists.
             ValueError: If *old_path* or *new_path* escapes the source
-                directory, or a folder would move into its own subtree.
+                directory or lies outside the write prefix, or a folder
+                would move into its own subtree.
         """
+        self.check_write_prefix(old_path)
+        self.check_write_prefix(new_path)
         self._ensure_initialized()
         return self._doc_mgr.rename(
             old_path, new_path, if_match=if_match, update_links=update_links

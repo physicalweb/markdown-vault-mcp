@@ -8,6 +8,7 @@ All configuration is via environment variables. Most use the `MARKDOWN_VAULT_MCP
 |----------|------|---------|----------|-------------|
 | `MARKDOWN_VAULT_MCP_SOURCE_DIR` | path | — | **Yes** | Path to the markdown vault directory. Symbolic links inside the vault are followed on Python 3.13+ (3.11/3.12 do not follow symlinks); cyclic links hang the scan, so symlink-farm layouts must be acyclic |
 | `MARKDOWN_VAULT_MCP_READ_ONLY` | bool | `true` | No | Set to `false` to enable write operations |
+| `MARKDOWN_VAULT_MCP_WRITE_PREFIX` | string | — | No | Vault-relative folder every write must stay inside (e.g. `docs`): `write`, `edit`, `delete`, both paths of `rename`, `fetch` and uploads refuse a path outside it, naming `<prefix>/<path>` when that folder exists. Reads, search and listing stay vault-wide. Unset means no restriction. Uploads take a bare filename, so with a prefix set `create_upload_link` is always refused |
 | `MARKDOWN_VAULT_MCP_INDEX_PATH` | path | in-memory | No | Path to the SQLite FTS5 index file; set for persistence across restarts |
 | `MARKDOWN_VAULT_MCP_EMBEDDINGS_PATH` | path | disabled | No | Path to the numpy embeddings file; required to enable semantic search |
 | `MARKDOWN_VAULT_MCP_STATE_PATH` | path | `{SOURCE_DIR}/.markdown_vault_mcp/state.json` | No | Path to the change-tracking state file |

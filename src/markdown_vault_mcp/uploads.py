@@ -81,11 +81,13 @@ def _validate_upload_target(target_id: str, extra: dict[str, Any] | None) -> Non
             pvl-core's ``PreLinkValidator`` callable signature.
 
     Raises:
-        ValueError: If ``target_id`` would escape the vault or its
-            extension is not in the configured attachment allowlist.
+        ValueError: If ``target_id`` would escape the vault, lies outside
+            the write prefix, or its extension is not in the configured
+            attachment allowlist.
     """
     del extra
     collection = get_collection_singleton()
+    collection.check_write_prefix(target_id)
     if target_id.endswith(".md"):
         collection._validate_path(target_id)
     else:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import posixpath
 from typing import TYPE_CHECKING
 
 from markdown_vault_mcp.types import DEFAULT_ATTACHMENT_EXTENSIONS
@@ -78,10 +79,43 @@ def validate_path(path: str, source_dir: Path) -> Path:
     return abs_path
 
 
+def check_write_prefix(path: str, write_prefix: str | None, source_dir: Path) -> None:
+    """Refuse a write whose *path* is not under *write_prefix*.
+
+    The one guard behind every mutating operation (write, edit, delete,
+    both sides of rename, fetch, uploads).  Reads are not affected.
+
+    Args:
+        path: Vault-relative path the caller wants to write.
+        write_prefix: Vault-relative folder writes are confined to (e.g.
+            ``"docs"``).  ``None`` or empty means no restriction.
+        source_dir: Absolute path to the vault root, used to suggest the
+            path that was likely meant.
+
+    Raises:
+        ValueError: If *path* is not strictly inside *write_prefix*.  The
+            message names ``<prefix>/<path>`` when ``<prefix>/<first
+            segment>`` exists as a folder.
+    """
+    if not write_prefix:
+        return
+    prefix = write_prefix.replace("\\", "/").strip("/")
+    norm = posixpath.normpath(path.replace("\\", "/").lstrip("/"))
+    prefix_parts = prefix.split("/")
+    parts = norm.split("/")
+    if parts[: len(prefix_parts)] == prefix_parts and len(parts) > len(prefix_parts):
+        return
+    msg = f"Writes go only under {prefix}/; '{path}' is outside it."
+    if parts[0] not in ("", ".", "..") and (source_dir / prefix / parts[0]).is_dir():
+        msg += f" Did you mean {prefix}/{norm}?"
+    raise ValueError(msg)
+
+
 __all__ = [
     "CHAR_SUBS",
     "apply_link_replacement",
     "build_position_map",
+    "check_write_prefix",
     "compute_new_raw_target",
     "effective_attachment_extensions",
     "find_closest_match",

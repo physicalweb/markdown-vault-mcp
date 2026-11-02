@@ -113,6 +113,10 @@ class CollectionConfig:
             in bytes (default ``262144``, i.e. 256 KB).  ``0`` means unlimited.
         templates_folder: Vault-relative folder that holds note templates
             (default ``"_templates"``).
+        write_prefix: Vault-relative folder that every write (write, edit,
+            delete, both sides of rename, fetch, uploads) must stay inside,
+            e.g. ``"docs"``.  ``None`` (default) means no restriction.
+            Reads, search and listing are never restricted.
         prompts_folder: Vault-relative folder from which user-defined MCP
             prompts are loaded at startup.  ``None`` disables user prompts.
         event_store_url: URL for the FastMCP persistent event store used by
@@ -196,6 +200,7 @@ class CollectionConfig:
     max_attachment_size_mb: float = 1.0  # MB; 0 = unlimited
     max_note_read_bytes: int = 262144  # 256 KB; 0 = unlimited
     templates_folder: str = "_templates"
+    write_prefix: str | None = None
     prompts_folder: str | None = None
     event_store_url: str | None = None
 
@@ -273,6 +278,7 @@ class CollectionConfig:
             "attachment_extensions": self.attachment_extensions,
             "max_attachment_size_mb": self.max_attachment_size_mb,
             "max_note_read_bytes": self.max_note_read_bytes,
+            "write_prefix": self.write_prefix,
             "git_pull_interval_s": 0,
             "chunks_per_file": self.chunks_per_file,
             "snippet_words": self.snippet_words,
@@ -670,6 +676,10 @@ def load_config() -> CollectionConfig:
     )
     logger.debug("load_config: templates_folder=%s", templates_folder)
 
+    raw_write_prefix = (_env("WRITE_PREFIX") or "").strip()
+    write_prefix: str | None = raw_write_prefix.replace("\\", "/").strip("/") or None
+    logger.debug("load_config: write_prefix=%s", write_prefix or "not set")
+
     raw_prompts_folder = (_env("PROMPTS_FOLDER") or "").strip()
     if raw_prompts_folder:
         pf = Path(raw_prompts_folder.replace("\\", "/"))
@@ -905,6 +915,7 @@ def load_config() -> CollectionConfig:
         max_attachment_size_mb=max_attachment_size_mb,
         max_note_read_bytes=max_note_read_bytes,
         templates_folder=templates_folder,
+        write_prefix=write_prefix,
         prompts_folder=prompts_folder,
         event_store_url=event_store_url,
         server_name=server_name,

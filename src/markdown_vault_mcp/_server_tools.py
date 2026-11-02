@@ -1285,6 +1285,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
     ) -> dict[str, Any]:
         """Create or overwrite a document or attachment.
 
+        Writes go only under the server's write folder (docs/ on Agora's docs
+        server); a path outside it is refused, naming the path likely meant.
+
         For .md documents: uses 'content' (markdown body) and optional
         'frontmatter'. WARNING: replaces the entire file — use 'edit'
         for targeted changes. The search index is updated immediately;
@@ -1376,6 +1379,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         collection: Collection = Depends(get_collection),
     ) -> dict[str, Any]:
         """Make a targeted text replacement in an existing .md note (not supported for attachments).
+
+        Writes go only under the server's write folder (docs/ on Agora's docs
+        server); a path outside it is refused, naming the path likely meant.
 
         Three edit modes:
         - **Exact match** (old_text only): pass a portion of the file as
@@ -1469,6 +1475,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
     ) -> dict[str, Any]:
         """Permanently delete a document or attachment.
 
+        Writes go only under the server's write folder (docs/ on Agora's docs
+        server); a path outside it is refused, naming the path likely meant.
+
         For .md documents: removes the file and immediately updates all search
         indices — do not call 'reindex' afterward.
         For attachments: only the file is deleted (no index to update).
@@ -1524,6 +1533,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         renaming a .md note or a folder, always pass update_links=True to
         rewrite links in other documents that point to the old path(s) —
         omitting this leaves those links broken.
+
+        Writes go only under the server's write folder (docs/ on Agora's docs
+        server); a path outside it is refused, naming the path likely meant.
 
         For .md documents: the file and its search index entries are updated
         immediately — do not call 'reindex' afterward.
@@ -1717,6 +1729,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
     ) -> dict[str, Any]:
         """Download a file from a URL and save it to the vault.
 
+        Writes go only under the server's write folder (docs/ on Agora's docs
+        server); a path outside it is refused, naming the path likely meant.
+
         Fetches content from an HTTP/HTTPS URL and writes it as a note or
         attachment. Designed for MCP-to-MCP file transfer when content is
         too large to pass through the LLM context window.
@@ -1770,6 +1785,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 exceeds the size limit, or the response cannot be decoded.
             ImportError: If httpx is not installed.
         """
+        # Refuse a destination outside the write prefix before downloading.
+        collection.check_write_prefix(path)
+
         # Validate URL scheme (SSRF protection).
         parsed = urlparse(url)
         if parsed.scheme not in _ALLOWED_FETCH_SCHEMES:
