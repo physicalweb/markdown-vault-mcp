@@ -405,3 +405,84 @@ def test_section_read_leaves_out_an_adjacent_long_same_titled_section_and_says_s
     n_first = sum(1 for c in chunks if "first para" in c["content"])
     assert n_first > 1 and len(chunks) - n_first > 1, "both sections must be split, or the test proves nothing"
     assert f"[section 'Repeat': {len(chunks) - n_first} more chunk(s) under this title not returned" in nc.content
+
+
+def _long_heading(i: int) -> str:
+    return (
+        f"2.{i} Author {i}, *A Long Title of Work {i}* (Paris, 1925) [mine, lane B, "
+        f"drawn under run {i}'s rule as the test of the section before it; not in the "
+        "book (search, with a working control reaching the index and the works cited)]"
+    )
+
+
+def _long_heading_doc(n: int) -> str:
+    body = "# Map\n" + "\n".join(["intro"] * 12) + "\n"
+    for i in range(n):
+        body += f"## {_long_heading(i)}\n" + "\n".join([f"body of part {i}"] * 6) + "\n"
+    return body
+
+
+def test_miss_listing_of_many_long_headings_stays_under_a_clients_cut(tmp_path):
+    """AGO-849: past the budget every heading is listed by its opening words, and the listing says so."""
+    mgr = _mgr_for(tmp_path, _long_heading_doc(145))
+    with pytest.raises(ValueError) as excinfo:
+        mgr.read("a.md", section="No Such Heading")
+    message = str(excinfo.value)
+    assert len(message) < 10_000
+    assert "all 146 headings in this document" in message
+    assert "shown by their opening words" in message
+    for i in range(145):
+        assert f"'2.{i} Author {i}," in message
+
+
+def test_miss_listing_of_few_long_headings_stays_whole(tmp_path):
+    """Under the budget the listing is unchanged: every heading whole."""
+    mgr = _mgr_for(tmp_path, _long_heading_doc(3))
+    with pytest.raises(ValueError) as excinfo:
+        mgr.read("a.md", section="No Such Heading")
+    message = str(excinfo.value)
+    assert repr(_long_heading(2)) in message
+    assert "opening words" not in message
+
+
+def test_a_long_headings_opening_words_open_its_section(tmp_path):
+    """AGO-849: the opening words shown in the listing open the one heading that starts with them."""
+    mgr = _mgr_for(tmp_path, _long_heading_doc(145))
+    for opening in ("2.90 Author 90,", "2.90", "## 2.90 Author 90"):
+        nc = mgr.read("a.md", section=opening)
+        assert nc is not None
+        assert "body of part 90" in nc.content
+        assert "body of part 91" not in nc.content
+        assert nc.content.startswith(
+            f"[section opened by its opening words: {_long_heading(90)!r}]"
+        )
+
+
+def test_an_opening_must_end_on_a_word(tmp_path):
+    """ "2.9" does not open "2.90 ..." — a prefix inside a word is not an opening."""
+    mgr = _mgr_for(tmp_path, _long_heading_doc(12))
+    with pytest.raises(ValueError):
+        mgr.read("a.md", section="2.1 Auth")
+
+
+def test_an_opening_shared_by_several_headings_names_them(tmp_path):
+    """An opening several headings share opens none and lists exactly those, whole."""
+    body = (
+        "# Map\n"
+        + "\n".join(["intro"] * 12)
+        + "\n## Notes on Halbwachs, chapter one\n"
+        + "\n".join(["first"] * 6)
+        + "\n## Notes on Halbwachs, chapter two\n"
+        + "\n".join(["second"] * 6)
+        + "\n## Other\n"
+        + "\n".join(["third"] * 6)
+        + "\n"
+    )
+    mgr = _mgr_for(tmp_path, body)
+    with pytest.raises(ValueError) as excinfo:
+        mgr.read("a.md", section="Notes on Halbwachs,")
+    message = str(excinfo.value)
+    assert "2 headings open with these words" in message
+    assert "'Notes on Halbwachs, chapter one'" in message
+    assert "'Notes on Halbwachs, chapter two'" in message
+    assert "'Other'" not in message

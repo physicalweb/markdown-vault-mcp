@@ -79,6 +79,31 @@ def _strip_atx_markers(heading: str) -> str:
     return _ATX_CLOSE.sub("", _ATX_OPEN.sub("", heading)).strip()
 
 
+# AGO-849: the section-miss listing travels as a tool ERROR, and an MCP client may cut a long
+# error in its middle (Claude Code's "... [N characters truncated] ..." keeps the two ends). A
+# 145-heading map of ~200-character headings lost its middle headings so, and its author could not
+# name them. Past this budget each heading is listed by its opening words, and an opening opens it.
+_LISTING_BUDGET = 8000
+_LISTING_MIN_CHARS = 24
+
+
+def _opening(heading: str, max_chars: int) -> str:
+    """Return *heading* cut to at most *max_chars* at a word boundary (whole when it fits)."""
+    if len(heading) <= max_chars:
+        return heading
+    cut = heading[:max_chars].rsplit(" ", 1)[0]
+    return cut or heading[:max_chars]
+
+
+def _opens_with(heading: str, query: str) -> bool:
+    """True when whitespace-collapsed *heading* starts with *query* and the match ends on a word."""
+    norm = " ".join(heading.split())
+    if not norm.startswith(query):
+        return False
+    rest = norm[len(query) :]
+    return rest == "" or not rest[0].isalnum() or not query[-1].isalnum()
+
+
 class DocumentManager:
     """Manages document CRUD, attachments, path validation, and backlinks.
 
@@ -419,6 +444,19 @@ class DocumentManager:
             bare = _strip_atx_markers(heading)
             if bare and bare != heading:
                 chunks = self._fts.get_section_chunks(path, bare)
+        openers: list[str] = []
+        if not chunks:
+            # AGO-849: a long heading is named by its opening words (the miss listing shortens long
+            # headings to them); exactly one heading opening with the words opens that section.
+            query = " ".join(_strip_atx_markers(heading).split())
+            if query:
+                openers = [
+                    h
+                    for h in self._fts.list_section_headings(path, limit=None)
+                    if _opens_with(h, query)
+                ]
+            if len(openers) == 1:
+                chunks = self._fts.get_section_chunks(path, openers[0])
         section_row = chunks[0] if chunks else None
         if section_row is not None and len(chunks) > 1:
             # Keep only the chunks that CONTINUE the first section: a chunk starting on a heading line
@@ -438,10 +476,26 @@ class DocumentManager:
             # ALL the headings, counted (AGO-188): a listing cut at ten read as the whole document, so
             # the sections past the tenth read as absent.
             available = self._fts.list_section_headings(path, limit=None)
-            if available:
+            if len(openers) > 1:
+                # Several headings open with these words: name those, whole, and nothing else.
                 suggestion = (
-                    f" — all {len(available)} headings in this document: "
-                    + ", ".join(repr(h) for h in available)
+                    f" — {len(openers)} headings open with these words; name one more fully: "
+                    + ", ".join(repr(h) for h in openers)
+                )
+            elif available:
+                listing = ", ".join(repr(h) for h in available)
+                if len(listing) > _LISTING_BUDGET:
+                    # Never left to a client's cut (AGO-849): shorten every heading to its opening
+                    # words, say so, and say that an opening opens the section.
+                    per = max(_LISTING_MIN_CHARS, _LISTING_BUDGET // len(available) - 4)
+                    listing = (
+                        ", ".join(repr(_opening(h, per)) for h in available)
+                        + f". Headings longer than {per} characters are shown by their "
+                        "opening words; pass an opening as section= and it opens the one "
+                        "heading that starts with it"
+                    )
+                suggestion = (
+                    f" — all {len(available)} headings in this document: " + listing
                 )
             else:
                 suggestion = " (document has no indexed headings)"
@@ -459,6 +513,9 @@ class DocumentManager:
         cap = self._max_note_read_bytes if self._max_note_read_bytes > 0 else None
         parts: list[str] = []
         used = 0
+        if len(openers) == 1:
+            # Opened by its opening words (AGO-849): say which heading, whole, so the match is not silent.
+            parts.append(f"[section opened by its opening words: {openers[0]!r}]")
         for k, ch in enumerate(chunks):
             piece = ch["content"]
             if cap is not None and k > 0 and used + len(piece.encode("utf-8")) + 2 > cap:
