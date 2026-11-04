@@ -95,6 +95,22 @@ def _opening(heading: str, max_chars: int) -> str:
     return cut or heading[:max_chars]
 
 
+def _heading_listing(headings: list[str]) -> str:
+    """List *headings* by repr, each shortened to its opening words when the whole list passes the budget."""
+    listing = ", ".join(repr(h) for h in headings)
+    if len(listing) <= _LISTING_BUDGET:
+        return listing
+    # Never left to a client's cut (AGO-849): shorten every heading to its opening words, say so,
+    # and say that an opening opens the section.
+    per = max(_LISTING_MIN_CHARS, _LISTING_BUDGET // len(headings) - 4)
+    return (
+        ", ".join(repr(_opening(h, per)) for h in headings)
+        + f". Headings longer than {per} characters are shown by their "
+        "opening words; pass an opening as section= and it opens the one "
+        "heading that starts with it"
+    )
+
+
 def _opens_with(heading: str, query: str) -> bool:
     """True when whitespace-collapsed *heading* starts with *query* and the match ends on a word."""
     norm = " ".join(heading.split())
@@ -477,25 +493,16 @@ class DocumentManager:
             # the sections past the tenth read as absent.
             available = self._fts.list_section_headings(path, limit=None)
             if len(openers) > 1:
-                # Several headings open with these words: name those, whole, and nothing else.
+                # Several headings open with these words: name those and nothing else — under the same
+                # budget, since a short opening ("2.") can be shared by most of a long map's headings.
                 suggestion = (
                     f" — {len(openers)} headings open with these words; name one more fully: "
-                    + ", ".join(repr(h) for h in openers)
+                    + _heading_listing(openers)
                 )
             elif available:
-                listing = ", ".join(repr(h) for h in available)
-                if len(listing) > _LISTING_BUDGET:
-                    # Never left to a client's cut (AGO-849): shorten every heading to its opening
-                    # words, say so, and say that an opening opens the section.
-                    per = max(_LISTING_MIN_CHARS, _LISTING_BUDGET // len(available) - 4)
-                    listing = (
-                        ", ".join(repr(_opening(h, per)) for h in available)
-                        + f". Headings longer than {per} characters are shown by their "
-                        "opening words; pass an opening as section= and it opens the one "
-                        "heading that starts with it"
-                    )
                 suggestion = (
-                    f" — all {len(available)} headings in this document: " + listing
+                    f" — all {len(available)} headings in this document: "
+                    + _heading_listing(available)
                 )
             else:
                 suggestion = " (document has no indexed headings)"

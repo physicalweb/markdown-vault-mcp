@@ -486,3 +486,24 @@ def test_an_opening_shared_by_several_headings_names_them(tmp_path):
     assert "'Notes on Halbwachs, chapter one'" in message
     assert "'Notes on Halbwachs, chapter two'" in message
     assert "'Other'" not in message
+
+
+def test_an_opening_shared_by_many_long_headings_stays_under_a_clients_cut(tmp_path):
+    """A short opening ("2.") shared by most of a long map's headings is listed under the same budget."""
+    mgr = _mgr_for(tmp_path, _long_heading_doc(145))
+    with pytest.raises(ValueError) as excinfo:
+        mgr.read("a.md", section="2.")
+    message = str(excinfo.value)
+    assert len(message) < 10_000
+    assert "145 headings open with these words" in message
+    assert "shown by their opening words" in message
+    assert "'2.90 Author 90," in message
+
+
+def test_a_shorter_number_does_not_open_a_longer_one(tmp_path):
+    """ "2.9" opens "2.9 ..." and never "2.90 ..." (the match ends on a word)."""
+    mgr = _mgr_for(tmp_path, _long_heading_doc(145))
+    nc = mgr.read("a.md", section="2.9")
+    assert "body of part 9\n" in nc.content + "\n"
+    assert "body of part 90" not in nc.content
+    assert nc.content.startswith(f"[section opened by its opening words: {_long_heading(9)!r}]")
