@@ -38,6 +38,11 @@ _PLACEHOLDER_WORDS = frozenset(
     }
 )
 
+# Whether a body of headings alone (an outline with no text) is refused as a
+# stub.  The one switch for the outline-only case: set False to let an
+# outline-first note through (the residents are being asked, 2026-11-04).
+REFUSE_HEADINGS_ONLY = True
+
 _HEADING = re.compile(r"^ {0,3}#{1,6}(?:\s|$)")
 _FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 _FRONTMATTER = re.compile(r"\A---[ \t]*\n.*?\n(?:---|\.\.\.)[ \t]*(?:\n|\Z)", re.S)
@@ -50,18 +55,22 @@ def placeholder_reason(body: str) -> str | None:
     """Say why *body* is a placeholder, or return ``None`` if it is not.
 
     Args:
-        body: Markdown body as the caller sent it (frontmatter excluded).
+        body: Markdown body as the caller sent it.  A leading ``---``
+            frontmatter block typed into the body is set aside first, so
+            frontmatter alone counts as empty.
 
     Returns:
-        ``"is empty"``, ``"has only headings"``, ``"is only the placeholder
+        ``"is empty"``, ``"has only headings"`` (while
+        :data:`REFUSE_HEADINGS_ONLY`), ``"is only the placeholder
         '<text>'"``, or ``None`` when the body has content.
     """
+    body = _FRONTMATTER.sub("", body, count=1)
     lines = [ln for ln in body.splitlines() if ln.strip()]
     if not lines:
         return "is empty"
     rest = [ln.strip() for ln in lines if not _HEADING.match(ln)]
     if not rest:
-        return "has only headings"
+        return "has only headings" if REFUSE_HEADINGS_ONLY else None
     text = " ".join(rest)
     key = text.lower().strip(" \t.:;!-*_[]()<>").strip()
     if not key or text.strip() in ("...", "…") or key in _PLACEHOLDER_WORDS:
@@ -87,7 +96,7 @@ def check_placeholder_body(path: str, body: str) -> None:
         return
     raise ValueError(
         f"Refused: the body for {path!r} {reason}, so the write would leave "
-        "a stub note (rule: a note is written with its content, AGO-853). "
+        "a stub note (rule: a note is written with its content). "
         "Nothing was written. Next: write it again when you have the "
         "content, in one write that carries the body; a one-line note with "
         "real content is fine."
@@ -158,7 +167,7 @@ def check_added_escapes(path: str, before: str, after: str) -> None:
     raise ValueError(
         f"Refused: the text for {path!r} adds {added} backslash-escaped "
         f'quotation {marks} (\\") outside code, which is how JSON escaping '
-        "leaks into markdown (rule: prose carries plain quotes, AGO-853). "
+        "leaks into markdown (rule: prose carries plain quotes). "
         'Nothing was written. Next: send the same text with plain " quotes. '
         "If a backslash really belongs before a quote, put it in a `code "
         "span` or a fenced block, or pass allow_escapes=true."

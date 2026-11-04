@@ -78,7 +78,7 @@ class TestPlaceholderReason:
             check_placeholder_body("docs/x.md", "# X\n")
         msg = str(exc.value)
         assert "'docs/x.md' has only headings" in msg
-        assert "rule: a note is written with its content, AGO-853" in msg
+        assert "rule: a note is written with its content)" in msg
         assert "Nothing was written. Next: write it again" in msg
 
 
@@ -116,7 +116,7 @@ class TestCountStrayEscapes:
             check_added_escapes("n.md", old, old + 'And \\"new\\".\n')
         msg = str(exc.value)
         assert "adds 2 backslash-escaped quotation marks" in msg
-        assert "rule: prose carries plain quotes, AGO-853" in msg
+        assert "rule: prose carries plain quotes)" in msg
         assert "pass allow_escapes=true" in msg
 
     def test_singular(self) -> None:
@@ -196,7 +196,7 @@ class TestAnchorRefusals:
             col.edit("a.md", old_text="same line", new_text="x")
         msg = str(exc.value)
         assert "old_text appears 2 times in a.md; must appear exactly once" in msg
-        assert "rule: an edit's old_text matches exactly once, AGO-853" in msg
+        assert "rule: an edit's old_text matches exactly once)" in msg
         assert "Next: widen old_text" in msg
 
     def test_twice_after_normalization(self, col: Collection) -> None:
@@ -311,3 +311,96 @@ class TestTools:
             )
         assert "appears 2 times" in msg
         assert "Next: widen old_text" in msg
+
+
+# ---------------------------------------------------------------------------
+# Review fixes (6674c00 review)
+# ---------------------------------------------------------------------------
+
+
+class TestInlineFrontmatter:
+    @pytest.mark.parametrize(
+        ("body", "reason"),
+        [
+            ("---\ntitle: T\n---\n", "is empty"),
+            (
+                "---\ntitle: T\ntags: [a]\n---\n\nTODO\n",
+                "is only the placeholder 'TODO'",
+            ),
+        ],
+    )
+    def test_refused_like_the_parameter_form(self, body: str, reason: str) -> None:
+        assert placeholder_reason(body) == reason
+
+    def test_frontmatter_with_content_passes(self) -> None:
+        assert placeholder_reason("---\ntitle: T\n---\n\nA real line.\n") is None
+
+
+class TestHeadingsOnlySwitch:
+    def test_switch_off_lets_an_outline_through(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from markdown_vault_mcp.utils import write_guards
+
+        monkeypatch.setattr(write_guards, "REFUSE_HEADINGS_ONLY", False)
+        assert placeholder_reason("# A\n\n## B\n") is None
+        assert placeholder_reason("# A\n\nTODO\n") is not None
+        assert placeholder_reason("") == "is empty"
+
+
+def test_messages_carry_no_ticket_id() -> None:
+    with pytest.raises(ValueError) as a:
+        check_placeholder_body("n.md", "TODO")
+    with pytest.raises(ValueError) as b:
+        check_added_escapes("n.md", "", 'x \\" y')
+    assert "AGO-" not in str(a.value) + str(b.value)
+
+
+class TestNonUtf8Overwrite:
+    def test_overwrite_non_utf8_file_does_not_crash(
+        self, col: Collection, vault_path: Path
+    ) -> None:
+        (vault_path / "latin.md").write_bytes(b'caf\xe9 \\"old\\"\n')
+        col.write("latin.md", "Plain new text.\n", allow_escapes=False)
+        assert (vault_path / "latin.md").read_text() == "Plain new text.\n"
+
+    def test_overwrite_non_utf8_file_still_refuses_added(
+        self, col: Collection, vault_path: Path
+    ) -> None:
+        (vault_path / "latin2.md").write_bytes(b"caf\xe9\n")
+        with pytest.raises(ValueError, match="adds 1 backslash"):
+            col.write("latin2.md", 'New \\" text.\n', allow_escapes=False)
+
+
+@pytest.fixture
+def _env_docs(_env: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setenv("MARKDOWN_VAULT_MCP_WRITE_PREFIX", "docs")
+    (_env / "docs").mkdir(exist_ok=True)
+    return _env
+
+
+@pytest.mark.usefixtures("_env_docs")
+class TestRefusalOrder:
+    async def test_stub_outside_folder_gets_folder_refusal_first(self) -> None:
+        async with Client(make_server()) as client:
+            msg = await _tool_error(
+                client, "write", {"path": "notes/stub.md", "content": "TODO"}
+            )
+        assert "Writes go only under docs/" in msg
+        assert "placeholder" not in msg
+
+    async def test_stub_inside_folder_gets_placeholder_refusal(self) -> None:
+        async with Client(make_server()) as client:
+            msg = await _tool_error(
+                client, "write", {"path": "docs/stub.md", "content": "TODO"}
+            )
+        assert "is only the placeholder 'TODO'" in msg
+
+    async def test_inline_frontmatter_only_refused_by_tool(self) -> None:
+        async with Client(make_server()) as client:
+            msg = await _tool_error(
+                client,
+                "write",
+                {"path": "docs/fm.md", "content": "---\ntitle: T\n---\n"},
+            )
+        assert "'docs/fm.md' is empty" in msg

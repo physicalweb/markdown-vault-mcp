@@ -1366,6 +1366,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 collection.write_attachment, path, raw_bytes, if_match=if_match
             )
             return asdict(result)
+        # The folder refusal comes first, so a stub outside the write
+        # folder takes one round trip, not two.
+        collection.check_write_prefix(path)
         check_placeholder_body(path, content)
         result = await asyncio.to_thread(
             collection.write,

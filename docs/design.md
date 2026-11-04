@@ -1263,6 +1263,19 @@ This signals capability status to clients and reduces irrelevant prompting.
   `utils/write_guards.py`; `Collection.write`/`edit` take
   `allow_escapes=True` by default, so library callers, `fetch` and uploads are
   unaffected.
+  The folder (write-prefix) refusal runs first, so a stub outside the write
+  folder gets one refusal. A `---` frontmatter block typed into `content` is
+  set aside before the placeholder check, like the `frontmatter` parameter.
+  Resident-facing messages carry the rule text only, no ticket id.
+  Headings-only bodies are refused while `REFUSE_HEADINGS_ONLY` (in
+  `utils/write_guards.py`) is `True`; set it `False` to admit outline-first
+  notes. **Known limits:** fence detection is line-based (an indented
+  4-space code block, an HTML `<code>` span, a math span such as LaTeX
+  `\"o`, and a code span broken across lines are read as prose); the escape
+  rule compares net counts before and after, so an edit that removes one
+  stray escape and adds another passes; the placeholder check runs on
+  `write` only, so an `edit` that empties a note is not refused; literal
+  `\n` (JSON-escaped newlines) is not checked.
 - `delete(path)` removes file, updates index, triggers `on_write`
 - `fetch(url, path, frontmatter?, if_match?, timeout_s?)` downloads content
   from an HTTP/HTTPS URL and dispatches to `write()` (for `.md` paths) or

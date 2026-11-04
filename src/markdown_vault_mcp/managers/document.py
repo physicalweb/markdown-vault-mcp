@@ -76,12 +76,12 @@ _ATX_CLOSE = re.compile(r"[ \t]+#+[ \t]*$")
 # The rule and the permitted next act an anchor refusal carries (AGO-853,
 # AGO-854).  Nothing is written when either is raised.
 _ANCHOR_RULE_MANY = (
-    " (rule: an edit's old_text matches exactly once, AGO-853). Nothing was "
+    " (rule: an edit's old_text matches exactly once). Nothing was "
     "changed. Next: widen old_text with the text around it until it matches "
     "once, or scope it with line_start/line_end from a fresh 'read'."
 )
 _ANCHOR_RULE_NONE = (
-    " (0 matches; rule: an edit's old_text matches exactly once, AGO-853). "
+    " (0 matches; rule: an edit's old_text matches exactly once). "
     "Nothing was changed. Next: 'read' the section first and copy old_text "
     "from it as written; an anchor recalled from memory drifts."
 )
@@ -714,7 +714,12 @@ class DocumentManager:
                 file_content = content
 
             if not allow_escapes:
-                before = abs_path.read_text(encoding="utf-8") if not created else ""
+                # An old file that is not UTF-8 is counted, never a crash.
+                before = (
+                    ""
+                    if created
+                    else abs_path.read_text(encoding="utf-8", errors="replace")
+                )
                 check_added_escapes(path, before, file_content)
 
             with tempfile.NamedTemporaryFile(
