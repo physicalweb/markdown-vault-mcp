@@ -230,7 +230,7 @@ class TestMcpTools:
     async def test_write_refused_with_suggestion(self, docs_vault: Path) -> None:
         async with Client(make_server()) as client:
             msg = await _tool_error(
-                client, "write", {"path": "design/x.md", "content": "# X\n"}
+                client, "write", {"path": "design/x.md", "content": "# X\n\nA line.\n"}
             )
         assert _SUGGEST in msg
         assert not (docs_vault / "design").exists()
@@ -238,7 +238,7 @@ class TestMcpTools:
     async def test_write_allowed_inside(self, docs_vault: Path) -> None:
         async with Client(make_server()) as client:
             result = await client.call_tool(
-                "write", {"path": "docs/design/x.md", "content": "# X\n"}
+                "write", {"path": "docs/design/x.md", "content": "# X\n\nA line.\n"}
             )
         assert result.data["created"] is True
         assert (docs_vault / "docs/design/x.md").exists()

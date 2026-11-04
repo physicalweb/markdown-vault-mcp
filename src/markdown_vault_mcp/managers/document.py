@@ -57,6 +57,7 @@ from markdown_vault_mcp.utils.text import (
 from markdown_vault_mcp.utils.text import (
     normalize_text as _normalize_text,
 )
+from markdown_vault_mcp.utils.write_guards import check_added_escapes
 
 if TYPE_CHECKING:
     import threading
@@ -70,6 +71,20 @@ logger = logging.getLogger(__name__)
 
 _ATX_OPEN = re.compile(r"^#{1,6}[ \t]+")
 _ATX_CLOSE = re.compile(r"[ \t]+#+[ \t]*$")
+
+
+# The rule and the permitted next act an anchor refusal carries (AGO-853,
+# AGO-854).  Nothing is written when either is raised.
+_ANCHOR_RULE_MANY = (
+    " (rule: an edit's old_text matches exactly once, AGO-853). Nothing was "
+    "changed. Next: widen old_text with the text around it until it matches "
+    "once, or scope it with line_start/line_end from a fresh 'read'."
+)
+_ANCHOR_RULE_NONE = (
+    " (0 matches; rule: an edit's old_text matches exactly once, AGO-853). "
+    "Nothing was changed. Next: 'read' the section first and copy old_text "
+    "from it as written; an anchor recalled from memory drifts."
+)
 
 
 def _strip_atx_markers(heading: str) -> str:
@@ -640,6 +655,8 @@ class DocumentManager:
         content: str,
         frontmatter: dict[str, Any] | None = None,
         if_match: str | None = None,
+        *,
+        allow_escapes: bool = True,
     ) -> WriteResult:
         """Create or overwrite a document.
 
@@ -657,6 +674,9 @@ class DocumentManager:
                 that does not yet exist raises
                 :exc:`~markdown_vault_mcp.exceptions.ConcurrentModificationError`.
                 Pass ``None`` (default) to skip the check.
+            allow_escapes: When ``False``, refuse a write that adds
+                backslash-escaped quotes outside code (AGO-853; see
+                :func:`~markdown_vault_mcp.utils.write_guards.check_added_escapes`).
 
         Returns:
             :class:`~markdown_vault_mcp.types.WriteResult`.
@@ -665,7 +685,8 @@ class DocumentManager:
             ReadOnlyError: If the collection is read-only.
             ConcurrentModificationError: If *if_match* is provided and does
                 not match the current file hash (or the file does not exist).
-            ValueError: If *path* escapes the source directory.
+            ValueError: If *path* escapes the source directory, or the
+                write adds stray escapes and *allow_escapes* is ``False``.
         """
         self._check_writable()
         with self._write_lock:
@@ -691,6 +712,10 @@ class DocumentManager:
                 file_content = fm.dumps(post)
             else:
                 file_content = content
+
+            if not allow_escapes:
+                before = abs_path.read_text(encoding="utf-8") if not created else ""
+                check_added_escapes(path, before, file_content)
 
             with tempfile.NamedTemporaryFile(
                 dir=abs_path.parent,
@@ -817,6 +842,8 @@ class DocumentManager:
         if_match: str | None = None,
         line_start: int | None = None,
         line_end: int | None = None,
+        *,
+        allow_escapes: bool = True,
     ) -> EditResult:
         """Patch a section of a document.
 
@@ -854,6 +881,8 @@ class DocumentManager:
                 Must be provided together with *line_end*.
             line_end: Last line to replace (1-based, inclusive).
                 Must be provided together with *line_start*.
+            allow_escapes: When ``False``, refuse an edit that adds
+                backslash-escaped quotes outside code to the file (AGO-853).
 
         Returns:
             :class:`~markdown_vault_mcp.types.EditResult`.
@@ -915,6 +944,9 @@ class DocumentManager:
                 new_content, match_type = self._edit_with_text(
                     file_content, old_text, new_text, path
                 )
+
+            if not allow_escapes:
+                check_added_escapes(path, file_content, new_content)
 
             with tempfile.NamedTemporaryFile(
                 dir=abs_path.parent,
@@ -1021,7 +1053,7 @@ class DocumentManager:
         if count > 1:
             raise EditConflictError(
                 f"old_text appears {count} times in {location}; "
-                f"must appear exactly once"
+                f"must appear exactly once{_ANCHOR_RULE_MANY}"
             )
 
         # count == 0: try normalized matching.
@@ -1041,12 +1073,20 @@ class DocumentManager:
         if norm_count > 1:
             raise EditConflictError(
                 f"old_text appears {norm_count} times in {location} after "
-                f"normalization; must appear exactly once"
+                f"normalization; must appear exactly once{_ANCHOR_RULE_MANY}"
             )
 
         # norm_count == 0: raise with diagnostics.
         diag = _find_closest_match(old_text, content)
-        raise EditConflictError(f"old_text not found in {location}", **diag)
+        hint = ""
+        if '\\"' in old_text and '\\"' not in content:
+            hint = (
+                ' old_text has backslash-escaped quotes (\\") and the file has '
+                "none; send it with plain quotes."
+            )
+        raise EditConflictError(
+            f"old_text not found in {location}{_ANCHOR_RULE_NONE}{hint}", **diag
+        )
 
     def delete(self, path: str, if_match: str | None = None) -> DeleteResult:
         """Delete a document or attachment.

@@ -1159,6 +1159,8 @@ class Collection:
         content: str,
         frontmatter: dict | None = None,
         if_match: str | None = None,
+        *,
+        allow_escapes: bool = True,
     ) -> WriteResult:
         """Create or overwrite a document.
 
@@ -1173,6 +1175,8 @@ class Collection:
                 provided, the write is only performed if the current file hash
                 matches this value, preventing overwrites of concurrent
                 modifications.  Pass ``None`` (default) to skip the check.
+            allow_escapes: When ``False``, refuse a write that adds
+                backslash-escaped quotes outside code (AGO-853).
 
         Returns:
             :class:`~markdown_vault_mcp.types.WriteResult`.
@@ -1188,7 +1192,11 @@ class Collection:
         self._ensure_initialized()
         return self._awaiting_push(
             lambda: self._doc_mgr.write(
-                path, content, frontmatter=frontmatter, if_match=if_match
+                path,
+                content,
+                frontmatter=frontmatter,
+                if_match=if_match,
+                allow_escapes=allow_escapes,
             )
         )
 
@@ -1200,6 +1208,8 @@ class Collection:
         if_match: str | None = None,
         line_start: int | None = None,
         line_end: int | None = None,
+        *,
+        allow_escapes: bool = True,
     ) -> EditResult:
         """Patch a section of a document.
 
@@ -1216,6 +1226,8 @@ class Collection:
                 :meth:`write`.
             line_start: 1-based start line for line-range mode.
             line_end: 1-based end line (inclusive) for line-range mode.
+            allow_escapes: When ``False``, refuse an edit that adds
+                backslash-escaped quotes outside code (AGO-853).
 
         Returns:
             :class:`~markdown_vault_mcp.types.EditResult`.
@@ -1239,6 +1251,7 @@ class Collection:
                 if_match=if_match,
                 line_start=line_start,
                 line_end=line_end,
+                allow_escapes=allow_escapes,
             )
         )
 

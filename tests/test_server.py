@@ -500,7 +500,7 @@ class TestWriteTool:
         server = make_server()
         async with Client(server) as client:
             result = await client.call_tool(
-                "write", {"path": "simple.md", "content": "# Replaced\n"}
+                "write", {"path": "simple.md", "content": "# Replaced\n\nNew body.\n"}
             )
         data = result.data
         assert data["created"] is False

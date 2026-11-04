@@ -1251,6 +1251,18 @@ This signals capability status to clients and reduces irrelevant prompting.
 - `write(path, content, frontmatter?)` creates or overwrites entire file
 - `edit(path, old_text, new_text)` reads file, verifies `old_text` exists
   exactly once, replaces, writes back. Fails on not-found or ambiguous match.
+- **Write guards (AGO-853)**: the `write` and `edit` tools refuse three
+  malformed writes, each refusal naming its rule and the permitted next act,
+  and writing nothing: a `.md` body that is empty, only headings, or only a
+  placeholder (`TODO`, `TBD`, `FIXME`, `placeholder`, `WIP`, `coming soon`,
+  `to be written`, `...`, `lorem ipsum…`); a write or edit that adds
+  backslash-escaped quotes (`\"`) outside code spans, fenced blocks and
+  frontmatter (escapes already in the file do not count; `allow_escapes=true`
+  opts out); and an anchor matching zero or several times (the count, then
+  "widen old_text" or "read the section first"). The guards live in
+  `utils/write_guards.py`; `Collection.write`/`edit` take
+  `allow_escapes=True` by default, so library callers, `fetch` and uploads are
+  unaffected.
 - `delete(path)` removes file, updates index, triggers `on_write`
 - `fetch(url, path, frontmatter?, if_match?, timeout_s?)` downloads content
   from an HTTP/HTTPS URL and dispatches to `write()` (for `.md` paths) or

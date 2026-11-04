@@ -22,6 +22,7 @@ from fastmcp.exceptions import ToolError
 from markdown_vault_mcp.collection import Collection
 from markdown_vault_mcp.exceptions import EditConflictError
 from markdown_vault_mcp.git import GitWriteStrategy, PullResult, PushResult
+from markdown_vault_mcp.utils.write_guards import check_placeholder_body
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1284,12 +1285,17 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         frontmatter: dict[str, Any] | None = None,
         content_base64: str = "",
         if_match: str | None = None,
+        allow_escapes: bool = False,
         collection: Collection = Depends(get_collection),
     ) -> dict[str, Any]:
         """Create or overwrite a document or attachment.
 
         Writes go only under the server's write folder (docs/ on Agora's docs
         server); a path outside it is refused, naming the path likely meant.
+
+        A .md write is refused when its body is empty, only headings, or only
+        a placeholder ("TODO", "lorem ipsum", "..."), and when it adds
+        backslash-escaped quotes (\\") outside code; send plain quotes.
 
         For .md documents: uses 'content' (markdown body) and optional
         'frontmatter'. WARNING: replaces the entire file — use 'edit'
@@ -1325,6 +1331,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 When provided, the write only proceeds if the file has not
                 been modified since that read (optimistic concurrency).
                 Omit to write unconditionally.
+            allow_escapes: Pass true only for a note that truly needs
+                backslash-escaped quotes in prose (default false: such a
+                write is refused, since it is usually JSON escaping leaking
+                into markdown).
 
         Returns:
             Dict with path (str) and created (bool — true if new file,
@@ -1356,8 +1366,14 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 collection.write_attachment, path, raw_bytes, if_match=if_match
             )
             return asdict(result)
+        check_placeholder_body(path, content)
         result = await asyncio.to_thread(
-            collection.write, path, content, frontmatter=frontmatter, if_match=if_match
+            collection.write,
+            path,
+            content,
+            frontmatter=frontmatter,
+            if_match=if_match,
+            allow_escapes=allow_escapes,
         )
         return asdict(result)
 
@@ -1379,12 +1395,16 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         if_match: str | None = None,
         line_start: int | None = None,
         line_end: int | None = None,
+        allow_escapes: bool = False,
         collection: Collection = Depends(get_collection),
     ) -> dict[str, Any]:
         """Make a targeted text replacement in an existing .md note (not supported for attachments).
 
         Writes go only under the server's write folder (docs/ on Agora's docs
         server); a path outside it is refused, naming the path likely meant.
+
+        An edit that adds backslash-escaped quotes (\\") outside code is
+        refused; send plain quotes.
 
         Three edit modes:
         - **Exact match** (old_text only): pass a portion of the file as
@@ -1423,6 +1443,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 Must be provided together with line_end.
             line_end: Last line to replace (1-based, inclusive).
                 Must be provided together with line_start.
+            allow_escapes: Pass true only when the note truly needs
+                backslash-escaped quotes in prose (default false).
 
         Returns:
             - **path** (str): path of the edited document.
@@ -1446,6 +1468,7 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 if_match=if_match,
                 line_start=line_start,
                 line_end=line_end,
+                allow_escapes=allow_escapes,
             )
             return asdict(result)
         except EditConflictError as exc:

@@ -370,8 +370,8 @@ markdown-vault-mcp reindex [--source-dir PATH] [--index-path PATH]
 |------|-------------|
 | `search` | Hybrid full-text + semantic search with optional frontmatter filters |
 | `read` | Read a document or attachment by relative path |
-| `write` | Create or overwrite a document or attachment |
-| `edit` | Replace text in a document — exact match, line-range, or scoped match with normalized fallback |
+| `write` | Create or overwrite a document or attachment; refuses an empty or placeholder `.md` body and added backslash-escaped quotes outside code (`allow_escapes=true` opts out) |
+| `edit` | Replace text in a document — exact match, line-range, or scoped match with normalized fallback; refuses added backslash-escaped quotes outside code, and an anchor matching ≠ 1 times names the count and the next act |
 | `delete` | Delete a document or attachment and its index entries |
 | `rename` | Rename/move a document, attachment or whole folder, updating all index entries; pass `update_links=true` to also rewrite backlinks in other notes |
 | `list_documents` | List indexed documents; pass `include_attachments=true` to also list non-markdown files |
