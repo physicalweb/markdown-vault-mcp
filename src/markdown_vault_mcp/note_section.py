@@ -22,7 +22,7 @@ file):
 The rules match the bench's form of the tool in the agora repo
 (``src/tools/bench-mocks/note-section-mock.ts``), whose tests are this
 module's reference.  The git half (blame over the quoted lines, the writes
-count) is :meth:`markdown_vault_mcp.git.GitWriteStrategy.blame_lines` and
+count) is :meth:`markdown_vault_mcp.git.GitWriteStrategy.blame_newest` and
 :meth:`~markdown_vault_mcp.git.GitWriteStrategy.count_author_commits`.
 """
 

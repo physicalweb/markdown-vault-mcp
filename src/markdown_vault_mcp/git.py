@@ -2357,7 +2357,8 @@ class GitWriteStrategy:
                 text=True,
                 timeout=NOTE_GIT_TIMEOUT_S,
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            # OSError covers FileNotFoundError; ValueError covers UnicodeDecodeError.
             return None
         if result.returncode != 0:
             return None
@@ -2436,7 +2437,10 @@ class GitWriteStrategy:
         best_time = -1
         for sha in order:
             fields = meta[sha]
-            when = int(fields["author-time"])  # porcelain gives it for every commit
+            try:
+                when = int(fields["author-time"])
+            except (KeyError, ValueError):
+                return None
             email = fields.get("author-mail", "").strip().removeprefix("<")
             email = email.removesuffix(">")
             if when > best_time:
@@ -2457,7 +2461,9 @@ class GitWriteStrategy:
 
         ``git rev-list --count <since_sha>..HEAD --author=<email> -- <pathspec>``,
         with the email matched as a fixed string in angle brackets, so
-        ``ki@…`` does not also count ``kiki@…``.
+        ``ki@…`` does not also count ``kiki@…``, and the path taken literally
+        (``--literal-pathspecs``), so a ``*``, ``?`` or ``[`` in a folder name
+        is not a glob.
 
         Returns:
             The count, or ``None`` when git cannot answer.
@@ -2467,6 +2473,7 @@ class GitWriteStrategy:
             return None
         out = self._read_git(
             git_root,
+            "--literal-pathspecs",
             "rev-list",
             "--count",
             "--fixed-strings",
@@ -2475,7 +2482,12 @@ class GitWriteStrategy:
             "--",
             str(pathspec.resolve()),
         )
-        return None if out is None else int(out.strip())
+        if out is None:
+            return None
+        try:
+            return int(out.strip())
+        except ValueError:
+            return None
 
     def get_file_diff(
         self,

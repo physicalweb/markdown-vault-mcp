@@ -484,6 +484,54 @@ class TestGitReadsAnswerNoneNeverRaise:
         assert git.is_shallow(vault) is None
         assert git.blame_newest(vault, vault / NOTE, 5, 5) is None
 
+        def _not_utf8(*_a: object, **_k: object) -> None:
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
+
+        monkeypatch.setattr("markdown_vault_mcp.git.subprocess.run", _not_utf8)
+        assert git.is_shallow(vault) is None
+        assert git.count_author_commits(vault, "HEAD", KI[1], vault) is None
+
+    def test_malformed_output_answers_none(
+        self, vault: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (vault / NOTE).write_text(_doc("Plan."))
+        _commit(vault, KI, "2026-11-01T10:00:00Z", "c1")
+        git = GitWriteStrategy()
+        sha = "a" * 40
+        outputs = {
+            "rev-list": "not a number\n",
+            "blame": f"{sha} 5 5 1\nauthor Ki\nauthor-time soon\n\tPlan.\n",
+        }
+
+        def _fake(_self: GitWriteStrategy, _root: Path, *args: str) -> str:
+            return next(v for k, v in outputs.items() if k in args)
+
+        monkeypatch.setattr(GitWriteStrategy, "_read_git", _fake)
+        assert git.count_author_commits(vault, "HEAD", KI[1], vault) is None
+        assert git.blame_newest(vault, vault / NOTE, 5, 5) is None
+        outputs["blame"] = f"{sha} 5 5 1\nauthor Ki\n\tPlan.\n"  # no author-time at all
+        assert git.blame_newest(vault, vault / NOTE, 5, 5) is None
+
+    def test_program_path_is_literal_not_a_glob(self, vault: Path) -> None:
+        (vault / NOTE).write_text(_doc("Plan."))
+        c1 = _commit(vault, KI, "2026-11-01T10:00:00Z", "c1")
+        (vault / "research/circle/ledger.md").write_text("a\n")
+        _commit(vault, KI, "2026-11-02T10:00:00Z", "c2")
+        git = GitWriteStrategy()
+        # As a glob, "c?rcle" would match "circle" and count c2.
+        assert (
+            git.count_author_commits(vault, c1, KI[1], vault / "research/c?rcle") == 0
+        )
+        assert (
+            git.count_author_commits(vault, c1, KI[1], vault / "research/circle") == 1
+        )
+        (vault / "research/c?rcle").mkdir()
+        (vault / "research/c?rcle/note.md").write_text("b\n")
+        _commit(vault, KI, "2026-11-03T10:00:00Z", "c3")
+        assert (
+            git.count_author_commits(vault, c1, KI[1], vault / "research/c?rcle") == 1
+        )
+
 
 class TestQuoteWordEnd:
     def test_a_room_that_ends_just_before_a_space_keeps_its_last_word(self) -> None:
