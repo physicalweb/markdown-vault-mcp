@@ -59,6 +59,7 @@ Environment integration:
 
 from __future__ import annotations
 
+import functools
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -264,3 +265,42 @@ class GitAuthorAttributionMiddleware(Middleware):
             return await call_next(context)
         finally:
             _author_context.reset(ctx_token)
+
+
+@functools.lru_cache(maxsize=4)
+def participant_emails(mapping_path: str | Path | None) -> dict[str, str]:
+    """Return ``{participant_id: git_email}`` from the attribution mapping (``note_section``).
+
+    The same file, parsed the same way, as
+    :class:`GitAuthorAttributionMiddleware`, so a persona id maps to the
+    email her writes are committed under.  Loaded once per path, as the
+    middleware loads once per process.
+
+    Args:
+        mapping_path: The mapping YAML's path, or ``None`` (no mapping).
+
+    Returns:
+        The participant entries' emails; empty without a mapping.
+    """
+    if mapping_path is None:
+        return {}
+    middleware = GitAuthorAttributionMiddleware(mapping_path)
+    return {pid: ident.email for pid, ident in middleware._by_participant.items()}
+
+
+def email_for_participant(emails: dict[str, str], participant_id: str) -> str | None:
+    """Resolve *participant_id* as the middleware does: exact key, else ``<id>:<role>``'s bare id."""
+    exact = emails.get(participant_id)
+    if exact is not None:
+        return exact
+    bare, sep, _role = participant_id.partition(":")
+    return emails.get(bare) if sep and bare else None
+
+
+def participant_for_email(emails: dict[str, str], email: str) -> str | None:
+    """Return the persona id whose mapped email is *email* (a bare id first), else ``None``."""
+    ids = sorted(
+        (pid for pid, e in emails.items() if e.lower() == email.lower()),
+        key=lambda pid: (":" in pid, pid),
+    )
+    return ids[0] if ids else None

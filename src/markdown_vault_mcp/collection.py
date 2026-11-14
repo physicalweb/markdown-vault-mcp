@@ -857,6 +857,92 @@ class Collection:
             self._source_dir, abs_path, since, limit, until=until
         )
 
+    def note_section(
+        self,
+        path: str,
+        heading: str,
+        quote_bytes: int,
+        *,
+        author_email: str | None,
+        program_path: str,
+    ) -> dict[str, Any]:
+        """Quote the opening of a note's section, dated by git (Agora Plan 235 step 1).
+
+        Reads the file on disk, not the index (see
+        :mod:`markdown_vault_mcp.note_section` for the section and quote
+        rules).  ``written`` is the newest commit, by author time, among the
+        quoted lines (``git blame``); ``writes_since`` counts *author_email*'s
+        commits under *program_path* after it.
+
+        Args:
+            path: Vault-relative path of the note (must end with ``.md``).
+            heading: The section's heading, or its opening words.
+            quote_bytes: The most UTF-8 bytes the quote may take.
+            author_email: Whose writes ``writes_since`` counts; ``None`` to
+                not count.
+            program_path: Vault-relative folder the count is limited to
+                (``""`` for the whole vault).
+
+        Returns:
+            Found: ``heading``, ``quote``, ``more_bytes``, ``written``
+            (``{at, author_email, sha}`` or ``None``), ``writes_since``
+            (``{count, path}`` or ``None``) and ``git`` (``"ok"``, or
+            ``"no_git"`` when the history cannot be read: no repository, a
+            shallow clone, an untracked or uncommitted quoted line, an empty
+            quote).  Missed: ``{"error": "no_section" | "ambiguous" |
+            "unreadable"}``, with ``headings`` for ``ambiguous``.
+        """
+        from pathlib import Path
+
+        from markdown_vault_mcp.note_section import SectionMiss, cut_quote, find_section
+
+        try:
+            abs_path = self._validate_path(path)
+            content = abs_path.read_text(encoding="utf-8")
+        except (ValueError, OSError):
+            return {"error": "unreadable"}
+        lines = content.split("\n")
+        section = find_section(lines, heading)
+        if isinstance(section, SectionMiss):
+            if section.error == "ambiguous":
+                return {"error": "ambiguous", "headings": list(section.headings)}
+            return {"error": section.error}
+        q = cut_quote(lines[section.body_start : section.end], max(0, quote_bytes))
+        found: dict[str, Any] = {
+            "heading": section.heading,
+            "quote": q.quote,
+            "more_bytes": q.more_bytes,
+            "written": None,
+            "writes_since": None,
+            "git": "no_git",
+        }
+        git = self._git_strategy
+        if git is None or q.first < 0 or git.is_shallow(self._source_dir) is not False:
+            return found
+        written = git.blame_newest(
+            self._source_dir,
+            abs_path,
+            section.body_start + q.first + 1,
+            section.body_start + q.last + 1,
+        )
+        if written is None:
+            return found
+        found["git"] = "ok"
+        found["written"] = {
+            "at": written.at,
+            "author_email": written.author_email,
+            "sha": written.sha,
+        }
+        root = Path(self._source_dir).resolve()
+        prefix = (root / program_path).resolve()
+        if author_email and prefix.is_relative_to(root):
+            count = git.count_author_commits(
+                self._source_dir, written.sha, author_email, prefix
+            )
+            if count is not None:
+                found["writes_since"] = {"count": count, "path": program_path}
+        return found
+
     def get_diff(
         self,
         path: str,

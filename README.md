@@ -392,6 +392,7 @@ markdown-vault-mcp reindex [--source-dir PATH] [--index-path PATH]
 | `get_connection_path` | Find the shortest path between two notes via BFS on the undirected link graph (max 10 hops) |
 | `get_history` | List commits that touched a note or the whole vault (git-backed vaults only) |
 | `get_diff` | Return a unified diff of a note between a reference commit/timestamp and HEAD (git-backed vaults only) |
+| `note_section` | A daemon read for the Agora arrival line: quote the opening of a note's section, dated by `git blame` over the quoted lines, with the author's writes since (see [the tool reference](docs/tools/index.md#note_section)) |
 | `git_sync` | Force an immediate git pull / push / both, bypassing the periodic loops. Returns structured state (SHAs, commit counts, Syncthing-style conflict file paths if any). Hidden when `MARKDOWN_VAULT_MCP_GIT_REPO_URL` isn't set or `READ_ONLY=true`. |
 | `fetch` | Download a file from a URL and save it to the vault as a note or attachment (MCP-to-MCP transfer) |
 | `create_download_link` | Generate a one-time download URL for a vault file — enables MCP-to-MCP file transfer (HTTP/SSE transport only; requires `BASE_URL`) |

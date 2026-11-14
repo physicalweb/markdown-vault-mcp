@@ -70,3 +70,5 @@ _TOOL_ICONS["vault_context"] = _TOOL_ICONS["get_context"]
 _TOOL_ICONS["vault_list"] = _TOOL_ICONS["list_documents"]
 _TOOL_ICONS["vault_read"] = _TOOL_ICONS["read"]
 _TOOL_ICONS["vault_search"] = _TOOL_ICONS["search"]
+# The daemon-only section read (Agora Plan 235) reuses read's icon.
+_TOOL_ICONS["note_section"] = _TOOL_ICONS["read"]

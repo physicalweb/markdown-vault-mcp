@@ -26,6 +26,7 @@ markdown-vault-mcp exposes MCP tools across several categories. Write tools are 
 | [`get_connection_path`](#get_connection_path) | Read | Find the shortest path between two notes via link graph |
 | [`get_history`](#get_history) | Read (git) | List commits that touched a note or the whole vault |
 | [`get_diff`](#get_diff) | Read (git) | Return a unified diff of a note between two points in history |
+| [`note_section`](#note_section) | Read (git) | A daemon read: quote a section's opening, dated by git blame (for the Agora arrival line) |
 | [`reindex`](#reindex) | Admin | Force a full reindex of the vault |
 | [`build_embeddings`](#build_embeddings) | Admin | Build or rebuild vector embeddings |
 | [`write`](#write) | Write | Create or overwrite a document or attachment |
@@ -754,6 +755,26 @@ Exactly one of `since_sha` / `since_timestamp` must be supplied.
 - `per_commit=true`: object with `commits` (list of per-commit entries, newest-first — each containing `sha`, `short_sha`, `timestamp`, `message`, and `diff`) and `total` (count — always equals `len(commits)`; does NOT indicate how many commits exist beyond the `limit` cap). The envelope keeps the structured payload self-describing on the wire instead of relying on FastMCP's auto-wrapping `result` key.
 
 **Raises:** `ToolError` if parameters are invalid or the reference commit is not found.
+
+### `note_section`
+
+A daemon read, not meant for a conversation: the Agora daemon calls it at a resident's pulse to quote the opening of her own note, dated by git (Agora Plan 235 step 1). Every client lists it; the Agora daemon's persona allowlist does not, so no persona is served it. Use `read(path, section=...)` to read a section yourself.
+
+It reads the file **on disk**, not the index (the index's section boundaries are the chunker's, and it can lag the file). The section is the ATX heading named exactly, else the one heading that opens with the words (AGO-849's rule, shared with `read`), running to the next heading of the same or a higher level; headings inside fenced code are not headings. The quote is whole paragraphs of the section's body within `quote_bytes` UTF-8 bytes; a first paragraph longer than that is cut at its last sentence end inside the bound, else its last word, and ends with `…` (inside the bound). No read cap applies.
+
+**Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `path` | string | required | Relative vault path of the note. Must end with `.md`. |
+| `heading` | string | required | The section's heading, or its opening words. |
+| `quote_bytes` | int | required | The most UTF-8 bytes the quote may take (16 to 65536). The server holds no number of its own. |
+| `author` | string | required | A persona id (`ki`, or a seat spelling `ki:partner`), mapped to its git email through `MARKDOWN_VAULT_MCP_GIT_AUTHOR_MAPPING`, as the write attribution maps it. |
+| `program_path` | string | required | Relative vault folder that `writes_since` counts under (`""` for the whole vault). Echoed back as `writes_since.path`. |
+
+**Returns:** found: `heading` (as found), `quote`, `more_bytes` (the section's bytes after the quote, trimmed), `written` (`{at, author, sha}`: the newest commit by author time among the quoted lines, from `git blame --porcelain -L`; `at` is ISO 8601 UTC; `author` is the persona id the commit's email maps to, or `null`, never a git name or email), `writes_since` (`{count, path}`: `git rev-list --count <written.sha>..HEAD --author=<email> -- <program_path>`; `null` when the author has no mapped email), and `git` (`"ok"`, or `"no_git"` with `written` and `writes_since` null and the quote still returned, when the history cannot be read: no repository, a **shallow clone** (it would date old lines to the graft commit), a quoted line not yet committed, an empty section, or a git read past its 1 s bound). Missed: `{"error": "no_section"}`, `{"error": "ambiguous", "headings": [...]}` (several headings open with the words; never a guess), or `{"error": "unreadable"}` (no such file, a path outside the vault, not UTF-8).
+
+**Raises:** `ToolError` if `quote_bytes` is outside 16 to 65536.
 
 ---
 

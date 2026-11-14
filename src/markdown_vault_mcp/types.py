@@ -549,6 +549,21 @@ class HistoryEntry:
     paths_changed: list[str]
 
 
+@dataclass(frozen=True)
+class BlameCommit:
+    """The newest commit among a file's line range, by author time (``note_section``).
+
+    Attributes:
+        sha: Full 40-character commit SHA.
+        at: Author time, ISO 8601 in UTC (``"2026-11-10T16:49:00Z"``).
+        author_email: The commit author's email, without angle brackets.
+    """
+
+    sha: str
+    at: str
+    author_email: str
+
+
 @dataclass
 class CommitDiff:
     """A per-commit diff entry, returned by :meth:`~markdown_vault_mcp.collection.Collection.get_diff` when ``per_commit=True``.

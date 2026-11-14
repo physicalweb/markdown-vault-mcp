@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from markdown_vault_mcp.exceptions import ConfigurationError
-from markdown_vault_mcp.types import CommitDiff, HistoryEntry
+from markdown_vault_mcp.types import BlameCommit, CommitDiff, HistoryEntry
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,11 @@ def _build_askpass_env(token: str, username: str) -> dict[str, str]:
         "MVMCP_GIT_USERNAME": username,
         "MVMCP_GIT_TOKEN": token,
     }
+
+
+# note_section's three git reads (the shallow check, blame, rev-list) each stop here,
+# so together they stay inside the 4 s the Agora daemon waits (OWN_NOTE_READ_TIMEOUT_MS).
+NOTE_GIT_TIMEOUT_S = 1.0
 
 
 def _find_git_root(path: Path) -> Path | None:
@@ -2332,6 +2337,145 @@ class GitWriteStrategy:
                     break
                 i += 2
         return None
+
+    # ------------------------------------------------------------------
+    # note_section's git half (Agora Plan 235 step 1): blame over the
+    # quoted lines, and her writes under the program's path since.
+    # ------------------------------------------------------------------
+
+    def _read_git(self, git_root: Path, *args: str) -> str | None:
+        """Run a local, read-only git command; its stdout, or ``None`` on any failure.
+
+        Bounded by :data:`NOTE_GIT_TIMEOUT_S`: the caller (the Agora daemon)
+        waits a few seconds for the whole answer, and an answer of "no git"
+        is better than none.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(git_root), *args],
+                capture_output=True,
+                text=True,
+                timeout=NOTE_GIT_TIMEOUT_S,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+            return None
+        if result.returncode != 0:
+            return None
+        return result.stdout
+
+    def is_shallow(self, repo_path: Path) -> bool | None:
+        """Return whether the repository holding *repo_path* is a shallow clone.
+
+        A shallow clone dates every line older than its graft to the graft
+        commit, so ``note_section`` reports no date from one.
+
+        Returns:
+            ``True`` or ``False``; ``None`` when there is no repository or git
+            cannot say.
+        """
+        git_root = self._ensure_git_root(repo_path)
+        if git_root is None:
+            return None
+        out = self._read_git(git_root, "rev-parse", "--is-shallow-repository")
+        if out is None or out.strip() not in {"true", "false"}:
+            return None
+        return out.strip() == "true"
+
+    def blame_newest(
+        self, repo_path: Path, path: Path, first_line: int, last_line: int
+    ) -> BlameCommit | None:
+        """Return the newest commit, by author time, among lines *first_line*..*last_line*.
+
+        Runs ``git blame --porcelain -L`` over the file as it is on disk, so
+        the line numbers are the ones the caller parsed.
+
+        Args:
+            repo_path: Path inside the git repository (used to locate the root).
+            path: Absolute path of the file.
+            first_line: First line of the range, 1-based.
+            last_line: Last line of the range, 1-based, inclusive.
+
+        Returns:
+            The newest :class:`~markdown_vault_mcp.types.BlameCommit`, the
+            first seen on a tie; ``None`` when git cannot answer (no
+            repository, an untracked file, a line not yet committed, a
+            timeout).
+        """
+        git_root = self._ensure_git_root(repo_path)
+        if git_root is None or first_line < 1 or last_line < first_line:
+            return None
+        out = self._read_git(
+            git_root,
+            "blame",
+            "--porcelain",
+            "-L",
+            f"{first_line},{last_line}",
+            "--",
+            str(path.resolve()),
+        )
+        if out is None:
+            return None
+        meta: dict[str, dict[str, str]] = {}
+        order: list[str] = []
+        current: str | None = None
+        for line in out.splitlines():
+            if line.startswith("\t"):
+                continue
+            head = line.split(" ", 1)
+            if len(head[0]) == 40 and all(c in "0123456789abcdef" for c in head[0]):
+                current = head[0]
+                if current not in meta:
+                    meta[current] = {}
+                    order.append(current)
+                continue
+            if current is not None and len(head) == 2:
+                meta[current].setdefault(head[0], head[1])
+        if not order or any(set(sha) == {"0"} for sha in order):
+            return None
+        best: BlameCommit | None = None
+        best_time = -1
+        for sha in order:
+            fields = meta[sha]
+            when = int(fields["author-time"])  # porcelain gives it for every commit
+            email = fields.get("author-mail", "").strip().removeprefix("<")
+            email = email.removesuffix(">")
+            if when > best_time:
+                best_time = when
+                best = BlameCommit(
+                    sha=sha,
+                    at=datetime.datetime.fromtimestamp(when, tz=datetime.UTC).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ"
+                    ),
+                    author_email=email,
+                )
+        return best
+
+    def count_author_commits(
+        self, repo_path: Path, since_sha: str, author_email: str, pathspec: Path
+    ) -> int | None:
+        """Count the commits after *since_sha* authored by *author_email* under *pathspec*.
+
+        ``git rev-list --count <since_sha>..HEAD --author=<email> -- <pathspec>``,
+        with the email matched as a fixed string in angle brackets, so
+        ``ki@…`` does not also count ``kiki@…``.
+
+        Returns:
+            The count, or ``None`` when git cannot answer.
+        """
+        git_root = self._ensure_git_root(repo_path)
+        if git_root is None:
+            return None
+        out = self._read_git(
+            git_root,
+            "rev-list",
+            "--count",
+            "--fixed-strings",
+            f"--author=<{author_email}>",
+            f"{since_sha}..HEAD",
+            "--",
+            str(pathspec.resolve()),
+        )
+        return None if out is None else int(out.strip())
 
     def get_file_diff(
         self,

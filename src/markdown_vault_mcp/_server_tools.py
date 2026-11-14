@@ -16,9 +16,15 @@ from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlparse, urlunparse
 
 from fastmcp import FastMCP
-from fastmcp.dependencies import Depends
+from fastmcp.dependencies import CurrentContext, Depends
 from fastmcp.exceptions import ToolError
+from fastmcp.server.context import Context
 
+from markdown_vault_mcp._author_middleware import (
+    email_for_participant,
+    participant_emails,
+    participant_for_email,
+)
 from markdown_vault_mcp.collection import Collection
 from markdown_vault_mcp.exceptions import EditConflictError
 from markdown_vault_mcp.git import GitWriteStrategy, PullResult, PushResult
@@ -27,6 +33,7 @@ from markdown_vault_mcp.utils.write_guards import check_placeholder_body
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from markdown_vault_mcp.config import CollectionConfig
     from markdown_vault_mcp.types import ReindexResult
 
 from ._icons import _TOOL_ICONS
@@ -1119,6 +1126,82 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             raise ToolError(str(exc)) from exc
         commits = [asdict(r) for r in results]
         return {"commits": commits, "total": len(commits)}
+
+    @mcp.tool(
+        icons=_TOOL_ICONS["note_section"],
+        annotations={
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "idempotentHint": True,
+        },
+    )
+    async def note_section(
+        path: str,
+        heading: str,
+        quote_bytes: int,
+        author: str,
+        program_path: str,
+        collection: Collection = Depends(get_collection),
+        ctx: Context = CurrentContext(),
+    ) -> dict[str, Any]:
+        """A daemon read for the Agora arrival line; not meant for a conversation.
+
+        The Agora daemon calls this at a resident's pulse to quote the
+        opening of her own note, dated by git (Agora Plan 235). Use 'read'
+        with section= to read a section yourself.
+
+        Reads the file on disk. The section is the heading named exactly,
+        else the one heading that opens with the words, up to the next
+        heading of the same or a higher level (fenced code skipped). The
+        quote is whole paragraphs of its body within quote_bytes; a longer
+        first paragraph is cut at a sentence end, else a word, and ends
+        with "…".
+
+        Args:
+            path: Vault-relative path of the note (e.g. "research/map.md").
+            heading: The section's heading, or its opening words.
+            quote_bytes: The most UTF-8 bytes the quote may take (16-65536).
+            author: The persona id whose writes 'writes_since' counts,
+                mapped to her git email by the attribution mapping.
+            program_path: Vault-relative folder the count is limited to,
+                echoed back as 'writes_since.path' ("" for the whole vault).
+
+        Returns:
+            Found: heading (as found), quote, more_bytes (the section's
+            bytes after the quote), written ({at, author, sha} of the
+            newest commit among the quoted lines by git blame, 'author' a
+            persona id or null; or null), writes_since ({count, path}: the
+            author's commits under program_path after 'written'; or null),
+            git ("ok", or "no_git" when the history cannot be read: no
+            repository, a shallow clone, an uncommitted quoted line).
+            Missed: {error: "no_section" | "ambiguous" | "unreadable"},
+            with 'headings' listed for "ambiguous".
+
+        Raises:
+            ToolError: If quote_bytes is outside 16-65536.
+        """
+        if not 16 <= quote_bytes <= 65536:
+            raise ToolError(f"quote_bytes must be 16-65536, got {quote_bytes}")
+        config: CollectionConfig | None = ctx.lifespan_context.get("config")
+        emails = participant_emails(
+            config.git_author_mapping_path if config is not None else None
+        )
+        answer = await asyncio.to_thread(
+            collection.note_section,
+            path,
+            heading,
+            quote_bytes,
+            author_email=email_for_participant(emails, author),
+            program_path=program_path,
+        )
+        written = answer.get("written")
+        if written is not None:
+            answer["written"] = {
+                "at": written["at"],
+                "author": participant_for_email(emails, written["author_email"]),
+                "sha": written["sha"],
+            }
+        return answer
 
     @mcp.tool(
         icons=_TOOL_ICONS["get_diff"],
