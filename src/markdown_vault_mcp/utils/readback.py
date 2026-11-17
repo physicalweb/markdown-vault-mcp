@@ -17,7 +17,9 @@ returns the same shape and its tests pin the same bytes on the same inputs
    middle line is shown removed, then every new one added.
 4. Within each run of changes, removals come before additions.
 
-A diff longer than :data:`MAX_DIFF_LINES` lines is cut, and the result says so.
+A diff longer than :data:`MAX_DIFF_LINES` lines or :data:`MAX_DIFF_BYTES`
+bytes is cut at a whole line, whichever bound comes first, and the result
+says so.
 """
 
 from __future__ import annotations
@@ -28,6 +30,12 @@ from typing import Any
 CONTEXT = 3
 #: A diff longer than this many lines is cut (adapter policy, Plan 234 step 1).
 MAX_DIFF_LINES = 120
+#: ...or than this many UTF-8 bytes (adapter policy, Plan 234 step 1).  A
+#: one-word edit on docs/research/** returns about 1 KB and a 30% rewrite
+#: about the note's size (median 10 KB, max 34 KB): 16 KB carries the typical
+#: rewrite whole and keeps one result far under ``read``'s 256 KB cap (a
+#: one-character edit to a 400 KB one-line note returned an 800 KB diff).
+MAX_DIFF_BYTES = 16_384
 #: Above this many cells the middle is not aligned (one removed/added block).
 LCS_MAX_CELLS = 250_000
 
@@ -151,11 +159,12 @@ def unified_diff(path: str, before: str, after: str) -> str:
 
 
 def changed_lines(before: str, after: str) -> dict[str, int] | None:
-    """The first and last line of the change in the new text (1-based).
+    """The range of the new text that covers every change (1-based).
 
-    For a change that only removes lines, both are the line that now follows
-    the cut (the last line, when the cut is at the end).  ``None`` when
-    nothing changed or the new text is empty.
+    It runs from the first changed line to the last, so it may span unchanged
+    lines between two changes.  For a change that only removes lines, both are
+    the line after the cut, or the line before it when the cut is at the end.
+    ``None`` when nothing changed or the new text is empty.
     """
     a, b = _split(before), _split(after)
     if a == b or not b:
@@ -185,7 +194,8 @@ def readback(path: str, before: str | None, after: str) -> dict[str, Any]:
     Returns:
         A dict holding ``lines`` and, over an existing note, ``diff`` (``""``
         when nothing changed) and, for a cut diff, ``diff_truncated``
-        (``{"shown": n, "total": n}``).
+        (``{"shown": n, "total": n, "reason": "lines" | "bytes"}``, in diff
+        lines; *reason* names the bound that cut it).
     """
     if before is None:
         count = len(_split(after))
@@ -193,7 +203,17 @@ def readback(path: str, before: str | None, after: str) -> dict[str, Any]:
     diff = unified_diff(path, before, after)
     out: dict[str, Any] = {"diff": diff, "lines": changed_lines(before, after)}
     rows = diff.split("\n")[:-1]
-    if len(rows) > MAX_DIFF_LINES:
-        out["diff"] = "\n".join(rows[:MAX_DIFF_LINES]) + "\n"
-        out["diff_truncated"] = {"shown": MAX_DIFF_LINES, "total": len(rows)}
+    shown, size = 0, 0
+    for row in rows[:MAX_DIFF_LINES]:
+        size += len(row.encode("utf-8")) + 1
+        if size > MAX_DIFF_BYTES:
+            break
+        shown += 1
+    if shown < len(rows):
+        out["diff"] = "".join(row + "\n" for row in rows[:shown])
+        out["diff_truncated"] = {
+            "shown": shown,
+            "total": len(rows),
+            "reason": "lines" if shown == MAX_DIFF_LINES else "bytes",
+        }
     return out

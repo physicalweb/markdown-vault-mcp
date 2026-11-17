@@ -1407,7 +1407,8 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         Parent directories are created automatically for both.
 
         A .md write is read back as 'edit' is: over an existing note, diff
-        and lines; a new note gives lines (its whole range); and commit.
+        and lines (diff_truncated when the diff is cut); a new note gives
+        lines (its whole range); and commit, when the server pushes on write.
 
         Args:
             path: Relative path (e.g. "Journal/note.md" or
@@ -1445,9 +1446,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             pushed (bool — true once the write is in the shared repository;
             false means it is saved and committed here but not yet shared,
             and is retried) and push_error (str or null — why not).
-            For a .md note, the read-back (as for ``edit``): commit; over an
-            existing note diff and lines (and diff_truncated when cut); for
-            a new note lines, its whole range.
+            For a .md note, the read-back (as for ``edit``): commit (when the
+            server pushes on write); over an existing note diff and lines
+            (and diff_truncated when cut); for a new note lines, its whole
+            range.
 
         Supports split (write several new notes from one source) and merge
         (extend an existing note with content from another) when composed with
@@ -1536,9 +1538,10 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         The result reads the edit back, so you need not read the note again:
         diff (a unified diff of the note before and after, so it shows what
         a normalized match really replaced), lines ({first, last}: the
-        changed lines in the new text) and commit (the edit's commit id,
-        when the server pushes on write). A diff over 120 lines is cut,
-        with diff_truncated ({shown, total}); read the rest by lines.
+        range of the new text covering every change) and commit (the edit's
+        commit id, when the server pushes on write). A diff over 120 lines
+        or 16 KB is cut at a whole line, with diff_truncated ({shown, total,
+        reason}); read the note for the rest.
 
         Args:
             path: Relative path to the document.
@@ -1572,10 +1575,13 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
               on write).
             - **diff** (str): unified diff of the note before and after the
               edit, from the text on disk (3 lines of context).
-            - **lines** (dict): ``{first, last}``, the changed lines in the
-              new text.
-            - **diff_truncated** (dict): ``{shown, total}``, only when the
-              diff was cut at 120 lines.
+            - **lines** (dict): ``{first, last}``, the range of the new text
+              covering every change (it may span unchanged lines); for a
+              change that only removes lines, the line after the cut (the
+              line before it, at the end of the note).
+            - **diff_truncated** (dict): ``{shown, total, reason}`` in diff
+              lines, only when the diff was cut at 120 lines or 16 KB
+              (*reason* ``'lines'`` or ``'bytes'``).
 
         Raises:
             ValueError: If parameter combination is invalid, or line

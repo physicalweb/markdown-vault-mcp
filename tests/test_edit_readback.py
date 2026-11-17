@@ -24,6 +24,7 @@ from markdown_vault_mcp.git import GitWriteStrategy
 from markdown_vault_mcp.managers.document import DocumentManager
 from markdown_vault_mcp.scanner import HeadingChunker
 from markdown_vault_mcp.utils.readback import (
+    MAX_DIFF_BYTES,
     MAX_DIFF_LINES,
     changed_lines,
     readback,
@@ -63,7 +64,15 @@ def test_git_apply_takes_before_to_after(
     patch = tmp_path / "change.patch"
     patch.write_bytes(vector["diff"].encode("utf-8"))
     subprocess.run(
-        ["git", "apply", "--unsafe-paths", "--whitespace=nowarn", str(patch)],
+        [
+            "git",
+            "-c",
+            "core.autocrlf=false",
+            "apply",
+            "--unsafe-paths",
+            "--whitespace=nowarn",
+            str(patch),
+        ],
         cwd=tmp_path,
         check=True,
         capture_output=True,
@@ -77,8 +86,24 @@ def test_cut_diff_names_the_range_to_read() -> None:
     out = readback("n.md", before, after)
     assert out["diff_truncated"]["shown"] == MAX_DIFF_LINES
     assert out["diff_truncated"]["total"] > MAX_DIFF_LINES
+    assert out["diff_truncated"]["reason"] == "lines"
     assert len(out["diff"].split("\n")) == MAX_DIFF_LINES + 1  # trailing newline
     assert out["lines"] == {"first": 51, "last": 200}
+
+
+def test_a_long_line_is_cut_by_bytes() -> None:
+    # The review's case: one character changed in a 400 KB one-line note.
+    before = "x" * 400_000
+    out = readback("n.md", before, before[:-1] + "y")
+    assert len(out["diff"].encode("utf-8")) <= MAX_DIFF_BYTES
+    assert out["diff_truncated"] == {"shown": 3, "total": 7, "reason": "bytes"}
+    assert out["lines"] == {"first": 1, "last": 1}
+
+
+def test_lines_at_the_end_is_the_line_before_the_cut() -> None:
+    assert changed_lines("a\nb\nc\n", "a\nb\n") == {"first": 2, "last": 2}
+    # One range over every change, unchanged lines between included.
+    assert changed_lines("a\nb\nc\nd\n", "A\nb\nc\nD\n") == {"first": 1, "last": 4}
 
 
 def test_a_new_note_returns_its_range_and_no_diff() -> None:

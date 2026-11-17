@@ -241,9 +241,11 @@ class WriteResult:
         diff: Over an existing note, the unified diff of what changed
             (``""`` when nothing did).  ``None`` for a new note and for
             attachments.
-        lines: The first and last line of the change in the new text,
-            ``{"first": n, "last": n}``; for a new note, its whole range.
-        diff_truncated: ``{"shown": n, "total": n}`` when *diff* was cut.
+        lines: The range of the new text covering every change,
+            ``{"first": n, "last": n}`` (it may span unchanged lines); for a
+            new note, its whole range.
+        diff_truncated: ``{"shown": n, "total": n, "reason": r}`` when *diff*
+            was cut (at 120 lines or 16 KB; *reason* names which).
     """
 
     path: str

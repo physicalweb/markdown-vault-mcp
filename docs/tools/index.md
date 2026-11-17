@@ -256,8 +256,8 @@ instead — bytes flow over plain HTTP, not through MCP context.
 
 A `.md` write is read back as [`edit`](#edit) is: over an existing note it
 returns `diff` and `lines`; a new note returns `lines`, its whole range.
-`commit` is added when the server pushes on write. An attachment's result
-carries none of these.
+`commit` is added when the server pushes on write, and `diff_truncated` when
+the diff is cut. An attachment's result carries none of these.
 
 !!! warning
     `write` replaces the entire file — use `edit` for targeted changes to existing documents.
@@ -290,9 +290,9 @@ The result also reads the edit back, so the caller need not `read` the note agai
 | Field | Description |
 |-------|-------------|
 | `diff` | Unified diff (git's format, 3 lines of context, `a/`/`b/` path headers) of the note before and after the edit, computed from the text on disk, so it shows what a normalized match really replaced |
-| `lines` | `{"first": n, "last": n}`: the changed lines in the new text (for a change that only removes lines, the line now after the cut) |
+| `lines` | `{"first": n, "last": n}`: the range of the new text that covers every change, so it may span unchanged lines between two changes (for a change that only removes lines, the line after the cut, or the line before it at the end of the note) |
 | `commit` | The id of the edit's commit, as on the remote; only when the server pushes on write (`MARKDOWN_VAULT_MCP_GIT_PUSH_ON_WRITE`) |
-| `diff_truncated` | `{"shown": 120, "total": n}`, only when the diff ran past 120 lines and was cut; read the rest by `lines` |
+| `diff_truncated` | `{"shown": n, "total": n, "reason": "lines"}` (counts in diff lines), only when the diff ran past 120 lines or 16 KB and was cut at a whole line; `reason` is `"lines"` or `"bytes"`, the bound that cut it. Read the note for the rest |
 
 !!! tip "Usage pattern"
     Always call `read` first to get the exact current text and line numbers. For small edits, use `old_text` (exact match). For large block replacements, use `line_start`/`line_end` with the line numbers shown by `read`. Frontmatter can be edited — `old_text` may span the YAML block.
