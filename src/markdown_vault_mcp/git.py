@@ -272,10 +272,14 @@ class PushOutcome:
         pushed: ``True`` when the write's commit is on the remote.
         error: Why not, when ``pushed`` is ``False``.  The commit stays
             local and is pushed by the next write, ``flush`` or startup.
+        commit: The id of the write's commit as it stands after the push
+            (a rejected push is rebased once, which changes it); ``None``
+            when nothing was committed (Agora Plan 234's read-back).
     """
 
     pushed: bool
     error: str | None = None
+    commit: str | None = None
 
 
 class GitWriteStrategy:
@@ -625,7 +629,7 @@ class GitWriteStrategy:
         inline = self._enable_push and self._push_on_write
         try:
             with self._lock:
-                _stage_and_commit(
+                committed = _stage_and_commit(
                     self._git_root,
                     path,
                     operation,
@@ -633,7 +637,7 @@ class GitWriteStrategy:
                     commit_email=self._commit_email,
                 )
             if inline:
-                return self._push_now()
+                return self._push_now(committed=bool(committed))
             if self._enable_push:
                 self._schedule_push()
         except subprocess.CalledProcessError as exc:
@@ -663,12 +667,18 @@ class GitWriteStrategy:
                 )
         return None
 
-    def _push_now(self) -> PushOutcome:
+    def _push_now(self, *, committed: bool = False) -> PushOutcome:
         """Push inline, once more after a fetch + rebase if rejected (AGO-802).
 
         Runs under :attr:`_lock`, so it never overlaps a pull or another push.
         A push that still fails leaves ``_push_pending`` set: the commit is
         local only, and the next write, :meth:`flush` or startup pushes it.
+
+        Args:
+            committed: The write made a commit, so its id is read back: the
+                head after the push, under the same lock (Agora Plan 234).
+                Writes commit on one worker thread and pulls only fast-forward
+                or rebase, so the head is this write's commit.
         """
         assert self._git_root is not None
         git_root = self._git_root
@@ -687,10 +697,15 @@ class GitWriteStrategy:
                 except subprocess.CalledProcessError as exc:
                     error = self._redact((exc.stderr or "").strip() or str(exc))
                     logger.error("Git: push failed after rebase: %s", error)
-                    return PushOutcome(pushed=False, error=error)
+                    return PushOutcome(
+                        pushed=False,
+                        error=error,
+                        commit=_head_sha(git_root) if committed else None,
+                    )
             self._push_pending = False
+            commit = _head_sha(git_root) if committed else None
         logger.info("Git: pushed to remote")
-        return PushOutcome(pushed=True)
+        return PushOutcome(pushed=True, commit=commit)
 
     def _rebase_onto_upstream(self, git_root: Path) -> None:
         """Fetch, then replay local commits onto ``@{upstream}``.
@@ -2760,7 +2775,7 @@ def _stage_and_commit(
     operation: Literal["write", "edit", "delete", "rename"],
     commit_name: str = GitWriteStrategy.DEFAULT_COMMIT_NAME,
     commit_email: str = GitWriteStrategy.DEFAULT_COMMIT_EMAIL,
-) -> None:
+) -> bool:
     """Stage and commit a single file change (no push).
 
     Args:
@@ -2769,6 +2784,9 @@ def _stage_and_commit(
         operation: The write operation type.
         commit_name: Git committer name (overrides git config).
         commit_email: Git committer email (overrides git config).
+
+    Returns:
+        ``True`` when a commit was made; ``False`` when nothing was staged.
     """
     root = str(git_root)
 
@@ -2829,7 +2847,7 @@ def _stage_and_commit(
         logger.debug(
             "Git: nothing staged for %s (%s), skipping commit", rel_path, operation
         )
-        return
+        return False
 
     commit_msg = f"{operation}: {rel_path}"
 
@@ -2875,6 +2893,19 @@ def _stage_and_commit(
         )
     else:
         logger.info("Git: committed %s (%s)", rel_path, operation)
+    return True
+
+
+def _head_sha(git_root: Path) -> str | None:
+    """The head commit's id, or ``None`` if it cannot be read."""
+    proc = subprocess.run(
+        ["git", "-C", str(git_root), "rev-parse", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
 
 
 def _push(git_root: Path, token: str | None, username: str = "x-access-token") -> None:

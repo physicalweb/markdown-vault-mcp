@@ -644,6 +644,8 @@ class WriteResult:
     """Result of a write operation."""
     path: str
     created: bool                     # True if new file, False if overwrite
+    # pushed / push_error (push-on-write), then the read-back: commit,
+    # diff (over an existing note), lines, diff_truncated (when cut)
 
 @dataclass
 class EditResult:
@@ -651,6 +653,8 @@ class EditResult:
     path: str
     replacements: int                 # always 1 (enforced by edit semantics)
     match_type: str = "exact"         # "exact" or "normalized"
+    # pushed / push_error (push-on-write), then the read-back: commit,
+    # diff (unified, from the text on disk), lines, diff_truncated (when cut)
 
 @dataclass
 class DeleteResult:

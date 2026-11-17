@@ -235,12 +235,25 @@ class WriteResult:
             remote; ``False`` when it is saved and committed here but not yet
             pushed (see *push_error*; it is retried).  ``None`` otherwise.
         push_error: Why the push failed, when *pushed* is ``False``.
+        commit: The id of the commit the write made (push-on-write only;
+            local until *pushed* is ``True``).  ``None`` when no commit was
+            made or the commit runs in the background (Agora Plan 234).
+        diff: Over an existing note, the unified diff of what changed
+            (``""`` when nothing did).  ``None`` for a new note and for
+            attachments.
+        lines: The first and last line of the change in the new text,
+            ``{"first": n, "last": n}``; for a new note, its whole range.
+        diff_truncated: ``{"shown": n, "total": n}`` when *diff* was cut.
     """
 
     path: str
     created: bool
     pushed: bool | None = None
     push_error: str | None = None
+    commit: str | None = None
+    diff: str | None = None
+    lines: dict[str, int] | None = None
+    diff_truncated: dict[str, int] | None = None
 
 
 @dataclass
@@ -253,6 +266,11 @@ class EditResult:
         match_type: How the replacement was found: ``"exact"`` (verbatim match) or ``"normalized"`` (whitespace-normalised match).
         pushed: As :attr:`WriteResult.pushed`.
         push_error: As :attr:`WriteResult.push_error`.
+        commit: As :attr:`WriteResult.commit`.
+        diff: The unified diff of what the edit changed, from the text on
+            disk before and after it (Agora Plan 234).
+        lines: As :attr:`WriteResult.lines`.
+        diff_truncated: As :attr:`WriteResult.diff_truncated`.
     """
 
     path: str
@@ -260,6 +278,10 @@ class EditResult:
     match_type: str = "exact"
     pushed: bool | None = None
     push_error: str | None = None
+    commit: str | None = None
+    diff: str | None = None
+    lines: dict[str, int] | None = None
+    diff_truncated: dict[str, int] | None = None
 
 
 @dataclass

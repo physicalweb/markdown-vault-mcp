@@ -1,0 +1,176 @@
+[
+ {
+  "name": "one word mid-file",
+  "path": "docs/notes/test.md",
+  "before": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "after": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline ten\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -7,7 +7,7 @@\n line 7\n line 8\n line 9\n-line 10\n+line ten\n line 11\n line 12\n line 13\n",
+  "lines": {
+   "first": 10,
+   "last": 10
+  }
+ },
+ {
+  "name": "replaced block keeps an unchanged inner line",
+  "path": "docs/notes/test.md",
+  "before": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "after": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8b\nline 9\nline 10b\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -5,9 +5,9 @@\n line 5\n line 6\n line 7\n-line 8\n+line 8b\n line 9\n-line 10\n+line 10b\n line 11\n line 12\n line 13\n",
+  "lines": {
+   "first": 8,
+   "last": 10
+  }
+ },
+ {
+  "name": "insert at the start",
+  "path": "docs/notes/test.md",
+  "before": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "after": "# Title\n\nline 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,3 +1,5 @@\n+# Title\n+\n line 1\n line 2\n line 3\n",
+  "lines": {
+   "first": 1,
+   "last": 2
+  }
+ },
+ {
+  "name": "delete in the middle",
+  "path": "docs/notes/test.md",
+  "before": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "after": "line 1\nline 2\nline 3\nline 4\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -2,8 +2,6 @@\n line 2\n line 3\n line 4\n-line 5\n-line 6\n line 7\n line 8\n line 9\n",
+  "lines": {
+   "first": 5,
+   "last": 5
+  }
+ },
+ {
+  "name": "delete the last line",
+  "path": "docs/notes/test.md",
+  "before": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "after": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -17,4 +17,3 @@\n line 17\n line 18\n line 19\n-line 20\n",
+  "lines": {
+   "first": 19,
+   "last": 19
+  }
+ },
+ {
+  "name": "last line loses its newline",
+  "path": "docs/notes/test.md",
+  "before": "a\nb\nc\n",
+  "after": "a\nb\nc",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,3 +1,3 @@\n a\n b\n-c\n+c\n\\ No newline at end of file\n",
+  "lines": {
+   "first": 3,
+   "last": 3
+  }
+ },
+ {
+  "name": "last line gains its newline",
+  "path": "docs/notes/test.md",
+  "before": "a\nb\nc",
+  "after": "a\nb\nc\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,3 +1,3 @@\n a\n b\n-c\n\\ No newline at end of file\n+c\n",
+  "lines": {
+   "first": 3,
+   "last": 3
+  }
+ },
+ {
+  "name": "change without a final newline",
+  "path": "docs/notes/test.md",
+  "before": "a\nb\nc",
+  "after": "a\nB\nc",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n\\ No newline at end of file\n",
+  "lines": {
+   "first": 2,
+   "last": 2
+  }
+ },
+ {
+  "name": "two distant changes, two hunks",
+  "path": "docs/notes/test.md",
+  "before": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "after": "line 1\nline two\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline eighteen\nline 19\nline 20\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,5 +1,5 @@\n line 1\n-line 2\n+line two\n line 3\n line 4\n line 5\n@@ -15,6 +15,6 @@\n line 15\n line 16\n line 17\n-line 18\n+line eighteen\n line 19\n line 20\n",
+  "lines": {
+   "first": 2,
+   "last": 18
+  }
+ },
+ {
+  "name": "changes seven lines apart, one hunk",
+  "path": "docs/notes/test.md",
+  "before": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "after": "line 1\nline 2\nline 3\nline four\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline eleven\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,14 +1,14 @@\n line 1\n line 2\n line 3\n-line 4\n+line four\n line 5\n line 6\n line 7\n line 8\n line 9\n line 10\n-line 11\n+line eleven\n line 12\n line 13\n line 14\n",
+  "lines": {
+   "first": 4,
+   "last": 11
+  }
+ },
+ {
+  "name": "an empty note filled",
+  "path": "docs/notes/test.md",
+  "before": "",
+  "after": "first\nsecond\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -0,0 +1,2 @@\n+first\n+second\n",
+  "lines": {
+   "first": 1,
+   "last": 2
+  }
+ },
+ {
+  "name": "a note emptied",
+  "path": "docs/notes/test.md",
+  "before": "first\nsecond\n",
+  "after": "",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,2 +0,0 @@\n-first\n-second\n",
+  "lines": null
+ },
+ {
+  "name": "windows line endings kept",
+  "path": "docs/notes/test.md",
+  "before": "a\r\nb\r\nc\r\n",
+  "after": "a\r\nB\r\nc\r\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,3 +1,3 @@\n a\r\n-b\r\n+B\r\n c\r\n",
+  "lines": {
+   "first": 2,
+   "last": 2
+  }
+ },
+ {
+  "name": "unicode",
+  "path": "docs/notes/test.md",
+  "before": "Lín — “quoted”\nnext\n",
+  "after": "Lín — \"quoted\"\nnext\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,2 +1,2 @@\n-Lín — “quoted”\n+Lín — \"quoted\"\n next\n",
+  "lines": {
+   "first": 1,
+   "last": 1
+  }
+ },
+ {
+  "name": "no change",
+  "path": "docs/notes/test.md",
+  "before": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "after": "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10\nline 11\nline 12\nline 13\nline 14\nline 15\nline 16\nline 17\nline 18\nline 19\nline 20\n",
+  "diff": "",
+  "lines": null
+ },
+ {
+  "name": "cut at 120 lines",
+  "path": "docs/notes/test.md",
+  "before": "row 1\nrow 2\nrow 3\nrow 4\nrow 5\nrow 6\nrow 7\nrow 8\nrow 9\nrow 10\nrow 11\nrow 12\nrow 13\nrow 14\nrow 15\nrow 16\nrow 17\nrow 18\nrow 19\nrow 20\nrow 21\nrow 22\nrow 23\nrow 24\nrow 25\nrow 26\nrow 27\nrow 28\nrow 29\nrow 30\nrow 31\nrow 32\nrow 33\nrow 34\nrow 35\nrow 36\nrow 37\nrow 38\nrow 39\nrow 40\nrow 41\nrow 42\nrow 43\nrow 44\nrow 45\nrow 46\nrow 47\nrow 48\nrow 49\nrow 50\nrow 51\nrow 52\nrow 53\nrow 54\nrow 55\nrow 56\nrow 57\nrow 58\nrow 59\nrow 60\nrow 61\nrow 62\nrow 63\nrow 64\nrow 65\nrow 66\nrow 67\nrow 68\nrow 69\nrow 70\nrow 71\nrow 72\nrow 73\nrow 74\nrow 75\nrow 76\nrow 77\nrow 78\nrow 79\nrow 80\nrow 81\nrow 82\nrow 83\nrow 84\nrow 85\nrow 86\nrow 87\nrow 88\nrow 89\nrow 90\nrow 91\nrow 92\nrow 93\nrow 94\nrow 95\nrow 96\nrow 97\nrow 98\nrow 99\nrow 100\n",
+  "after": "ROW 1\nROW 2\nROW 3\nROW 4\nROW 5\nROW 6\nROW 7\nROW 8\nROW 9\nROW 10\nROW 11\nROW 12\nROW 13\nROW 14\nROW 15\nROW 16\nROW 17\nROW 18\nROW 19\nROW 20\nROW 21\nROW 22\nROW 23\nROW 24\nROW 25\nROW 26\nROW 27\nROW 28\nROW 29\nROW 30\nROW 31\nROW 32\nROW 33\nROW 34\nROW 35\nROW 36\nROW 37\nROW 38\nROW 39\nROW 40\nROW 41\nROW 42\nROW 43\nROW 44\nROW 45\nROW 46\nROW 47\nROW 48\nROW 49\nROW 50\nROW 51\nROW 52\nROW 53\nROW 54\nROW 55\nROW 56\nROW 57\nROW 58\nROW 59\nROW 60\nROW 61\nROW 62\nROW 63\nROW 64\nROW 65\nROW 66\nROW 67\nROW 68\nROW 69\nROW 70\nROW 71\nROW 72\nROW 73\nROW 74\nROW 75\nROW 76\nROW 77\nROW 78\nROW 79\nROW 80\nROW 81\nROW 82\nROW 83\nROW 84\nROW 85\nROW 86\nROW 87\nROW 88\nROW 89\nROW 90\nROW 91\nROW 92\nROW 93\nROW 94\nROW 95\nROW 96\nROW 97\nROW 98\nROW 99\nROW 100\n",
+  "diff": "--- a/docs/notes/test.md\n+++ b/docs/notes/test.md\n@@ -1,100 +1,100 @@\n-row 1\n-row 2\n-row 3\n-row 4\n-row 5\n-row 6\n-row 7\n-row 8\n-row 9\n-row 10\n-row 11\n-row 12\n-row 13\n-row 14\n-row 15\n-row 16\n-row 17\n-row 18\n-row 19\n-row 20\n-row 21\n-row 22\n-row 23\n-row 24\n-row 25\n-row 26\n-row 27\n-row 28\n-row 29\n-row 30\n-row 31\n-row 32\n-row 33\n-row 34\n-row 35\n-row 36\n-row 37\n-row 38\n-row 39\n-row 40\n-row 41\n-row 42\n-row 43\n-row 44\n-row 45\n-row 46\n-row 47\n-row 48\n-row 49\n-row 50\n-row 51\n-row 52\n-row 53\n-row 54\n-row 55\n-row 56\n-row 57\n-row 58\n-row 59\n-row 60\n-row 61\n-row 62\n-row 63\n-row 64\n-row 65\n-row 66\n-row 67\n-row 68\n-row 69\n-row 70\n-row 71\n-row 72\n-row 73\n-row 74\n-row 75\n-row 76\n-row 77\n-row 78\n-row 79\n-row 80\n-row 81\n-row 82\n-row 83\n-row 84\n-row 85\n-row 86\n-row 87\n-row 88\n-row 89\n-row 90\n-row 91\n-row 92\n-row 93\n-row 94\n-row 95\n-row 96\n-row 97\n-row 98\n-row 99\n-row 100\n+ROW 1\n+ROW 2\n+ROW 3\n+ROW 4\n+ROW 5\n+ROW 6\n+ROW 7\n+ROW 8\n+ROW 9\n+ROW 10\n+ROW 11\n+ROW 12\n+ROW 13\n+ROW 14\n+ROW 15\n+ROW 16\n+ROW 17\n",
+  "lines": {
+   "first": 1,
+   "last": 100
+  },
+  "diff_truncated": {
+   "shown": 120,
+   "total": 203
+  }
+ }
+]

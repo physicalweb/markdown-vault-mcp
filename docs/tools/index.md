@@ -252,7 +252,12 @@ LLM's own output budget.  The `content_base64` parameter (binary) inflates
 by ~33%; for files >100 KB use [`create_upload_link`](#create_upload_link)
 instead — bytes flow over plain HTTP, not through MCP context.
 
-**Returns:** `{"path": "Journal/note.md", "created": true}`
+**Returns:** `{"path": "Journal/note.md", "created": true, "lines": {"first": 1, "last": 12}}`
+
+A `.md` write is read back as [`edit`](#edit) is: over an existing note it
+returns `diff` and `lines`; a new note returns `lines`, its whole range.
+`commit` is added when the server pushes on write. An attachment's result
+carries none of these.
 
 !!! warning
     `write` replaces the entire file — use `edit` for targeted changes to existing documents.
@@ -279,6 +284,15 @@ Make a targeted text replacement in an existing document. Supports three modes:
 **Returns:** `{"path": "Journal/note.md", "replacements": 1, "match_type": "exact"}`
 
 `match_type` is `"exact"` when the text matched byte-for-byte, or `"normalized"` when it matched after Unicode/whitespace normalization.
+
+The result also reads the edit back, so the caller need not `read` the note again:
+
+| Field | Description |
+|-------|-------------|
+| `diff` | Unified diff (git's format, 3 lines of context, `a/`/`b/` path headers) of the note before and after the edit, computed from the text on disk, so it shows what a normalized match really replaced |
+| `lines` | `{"first": n, "last": n}`: the changed lines in the new text (for a change that only removes lines, the line now after the cut) |
+| `commit` | The id of the edit's commit, as on the remote; only when the server pushes on write (`MARKDOWN_VAULT_MCP_GIT_PUSH_ON_WRITE`) |
+| `diff_truncated` | `{"shown": 120, "total": n}`, only when the diff ran past 120 lines and was cut; read the rest by `lines` |
 
 !!! tip "Usage pattern"
     Always call `read` first to get the exact current text and line numbers. For small edits, use `old_text` (exact match). For large block replacements, use `line_start`/`line_end` with the line numbers shown by `read`. Frontmatter can be edited — `old_text` may span the YAML block.

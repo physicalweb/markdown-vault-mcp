@@ -1191,6 +1191,7 @@ class Collection:
         if not futures:
             return result
         errors: list[str] = []
+        commit: str | None = None
         for future in futures:
             try:
                 outcome = future.result(timeout=_PUSH_WAIT_S)
@@ -1200,6 +1201,7 @@ class Collection:
                 )
                 continue
             if isinstance(outcome, PushOutcome):
+                commit = outcome.commit or commit
                 if not outcome.pushed:
                     errors.append(outcome.error or "push failed")
             elif isinstance(outcome, Exception):
@@ -1207,7 +1209,10 @@ class Collection:
             else:
                 errors.append("no push ran (git disabled or closed)")
         return dataclasses.replace(
-            result, pushed=not errors, push_error="; ".join(errors) or None
+            result,
+            pushed=not errors,
+            push_error="; ".join(errors) or None,
+            commit=commit,
         )
 
     def read_attachment(self, path: str) -> AttachmentContent:

@@ -48,6 +48,7 @@ from markdown_vault_mcp.utils.links import (
 from markdown_vault_mcp.utils.links import (
     compute_new_raw_target as _compute_new_raw_target,
 )
+from markdown_vault_mcp.utils.readback import readback
 from markdown_vault_mcp.utils.text import (
     build_position_map as _build_position_map,
 )
@@ -124,6 +125,11 @@ def _heading_listing(headings: list[str]) -> str:
         "opening words; pass an opening as section= and it opens the one "
         "heading that starts with it"
     )
+
+
+def _disk_text(abs_path: Path) -> str:
+    """A note's text exactly as on disk (no newline translation), for a diff."""
+    return abs_path.read_bytes().decode("utf-8", errors="replace")
 
 
 def _opens_with(heading: str, query: str) -> bool:
@@ -704,6 +710,8 @@ class DocumentManager:
                         path, expected=if_match, actual=current_hash
                     )
             created = not abs_path.is_file()
+            # The read-back's "before" is the bytes on disk (Plan 234).
+            on_disk = None if created else _disk_text(abs_path)
 
             abs_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -744,7 +752,9 @@ class DocumentManager:
             self._fts.resolve_vault_wikilinks()
             self._on_vector_update(note)
 
-            result = WriteResult(path=path, created=created)
+            result = WriteResult(
+                path=path, created=created, **readback(path, on_disk, file_content)
+            )
 
         self._on_write_callback(abs_path, file_content, "write")
         return result
@@ -933,6 +943,7 @@ class DocumentManager:
                     )
 
             file_content = abs_path.read_text(encoding="utf-8")
+            on_disk = _disk_text(abs_path)
 
             if has_lines:
                 assert line_start is not None and line_end is not None
@@ -975,7 +986,12 @@ class DocumentManager:
             self._on_vector_update(note)
 
         self._on_write_callback(abs_path, new_content, "edit")
-        return EditResult(path=path, replacements=1, match_type=match_type)
+        return EditResult(
+            path=path,
+            replacements=1,
+            match_type=match_type,
+            **readback(path, on_disk, new_content),
+        )
 
     def _edit_with_lines(
         self,

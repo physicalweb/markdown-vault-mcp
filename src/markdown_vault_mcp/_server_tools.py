@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from markdown_vault_mcp.config import CollectionConfig
-    from markdown_vault_mcp.types import ReindexResult
+    from markdown_vault_mcp.types import EditResult, ReindexResult, WriteResult
 
 from ._icons import _TOOL_ICONS
 from ._server_deps import get_collection
@@ -261,6 +261,23 @@ async def _run_push_leg(strategy: GitWriteStrategy, *, dry_run: bool) -> dict[st
     """Run the push leg of ``git_sync`` and return its response dict."""
     push_result = await asyncio.to_thread(strategy.force_push, dry_run=dry_run)
     return _format_push_dict(push_result)
+
+
+#: The read-back fields (Agora Plan 234), left out of a result while unset.
+_READBACK_KEYS = ("commit", "diff", "lines", "diff_truncated")
+
+
+def _result_dict(result: WriteResult | EditResult) -> dict[str, Any]:
+    """A write or edit result as the tool returns it.
+
+    The read-back fields appear only when set, so an attachment's result, and
+    any result with no commit to report, keeps its earlier shape.
+    """
+    out = asdict(result)
+    for key in _READBACK_KEYS:
+        if out[key] is None:
+            del out[key]
+    return out
 
 
 def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
@@ -1389,6 +1406,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         encoded binary). 'content' and 'frontmatter' are ignored.
         Parent directories are created automatically for both.
 
+        A .md write is read back as 'edit' is: over an existing note, diff
+        and lines; a new note gives lines (its whole range); and commit.
+
         Args:
             path: Relative path (e.g. "Journal/note.md" or
                 "assets/photo.png"). Extension determines handling.
@@ -1425,6 +1445,9 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             pushed (bool — true once the write is in the shared repository;
             false means it is saved and committed here but not yet shared,
             and is retried) and push_error (str or null — why not).
+            For a .md note, the read-back (as for ``edit``): commit; over an
+            existing note diff and lines (and diff_truncated when cut); for
+            a new note lines, its whole range.
 
         Supports split (write several new notes from one source) and merge
         (extend an existing note with content from another) when composed with
@@ -1448,7 +1471,7 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             result = await asyncio.to_thread(
                 collection.write_attachment, path, raw_bytes, if_match=if_match
             )
-            return asdict(result)
+            return _result_dict(result)
         # The folder refusal comes first, so a stub outside the write
         # folder takes one round trip, not two.
         collection.check_write_prefix(path)
@@ -1461,7 +1484,7 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             if_match=if_match,
             allow_escapes=allow_escapes,
         )
-        return asdict(result)
+        return _result_dict(result)
 
     @mcp.tool(
         tags={"write"},
@@ -1510,6 +1533,13 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
         Always call 'read' first to get the current text and line numbers.
         The search index is updated immediately; do not call 'reindex'.
 
+        The result reads the edit back, so you need not read the note again:
+        diff (a unified diff of the note before and after, so it shows what
+        a normalized match really replaced), lines ({first, last}: the
+        changed lines in the new text) and commit (the edit's commit id,
+        when the server pushes on write). A diff over 120 lines is cut,
+        with diff_truncated ({shown, total}); read the rest by lines.
+
         Args:
             path: Relative path to the document.
             participant_id: Your participant identity (e.g. "ki", "lin",
@@ -1538,6 +1568,14 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
             - **match_type** (str): ``'exact'`` or ``'normalized'``.
             - **pushed** / **push_error**: as for ``write`` (set when the
               server pushes on write).
+            - **commit** (str): the edit's commit id (when the server pushes
+              on write).
+            - **diff** (str): unified diff of the note before and after the
+              edit, from the text on disk (3 lines of context).
+            - **lines** (dict): ``{first, last}``, the changed lines in the
+              new text.
+            - **diff_truncated** (dict): ``{shown, total}``, only when the
+              diff was cut at 120 lines.
 
         Raises:
             ValueError: If parameter combination is invalid, or line
@@ -1556,7 +1594,7 @@ def register_tools(mcp: FastMCP, *, transport: str = "stdio") -> None:
                 line_end=line_end,
                 allow_escapes=allow_escapes,
             )
-            return asdict(result)
+            return _result_dict(result)
         except EditConflictError as exc:
             parts = [str(exc)]
             if exc.closest_match_line is not None:

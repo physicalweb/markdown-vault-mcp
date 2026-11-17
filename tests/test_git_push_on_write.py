@@ -45,6 +45,10 @@ def _remote_files(pair: GitRepoPair) -> set[str]:
     return set(out.split())
 
 
+def _remote_head(pair: GitRepoPair) -> str:
+    return _run_git(pair.remote_path, "rev-parse", "main").strip()
+
+
 def _write(pair: GitRepoPair, strategy: GitWriteStrategy, name: str, body: str) -> Any:
     path = pair.local_path / name
     path.write_text(body)
@@ -56,7 +60,9 @@ class TestStrategyPushOnWrite:
         strategy = _strategy(git_repo_pair)
         try:
             outcome = _write(git_repo_pair, strategy, "a.md", "a\n")
-            assert outcome == PushOutcome(pushed=True)
+            assert outcome == PushOutcome(
+                pushed=True, commit=_remote_head(git_repo_pair)
+            )
             assert "a.md" in _remote_files(git_repo_pair)
             assert strategy._timer is None  # no debounce armed
             assert strategy._push_pending is False
@@ -82,7 +88,10 @@ class TestStrategyPushOnWrite:
                 git_repo_pair, clone_name="foreign", file_name="theirs.md", body="t\n"
             )
             outcome = _write(git_repo_pair, strategy, "ours.md", "o\n")
-            assert outcome == PushOutcome(pushed=True)
+            # The commit id is the rebased one, the one on the remote.
+            assert outcome == PushOutcome(
+                pushed=True, commit=_remote_head(git_repo_pair)
+            )
             assert {"theirs.md", "ours.md"} <= _remote_files(git_repo_pair)
             committer = _run_git(
                 git_repo_pair.local_path, "log", "-1", "--format=%cn"
