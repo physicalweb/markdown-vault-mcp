@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
@@ -278,10 +279,12 @@ class TestCmdServe:
         mock_load_config: MagicMock,
         mock_build_es: MagicMock,
         mock_uvicorn_run: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """_cmd_serve builds ASGI app via http_app() and runs uvicorn for http.
 
-        With EVENT_STORE_URL unset no event store is built (AGO-1017).
+        With EVENT_STORE_URL unset no event store is built, and boot says so
+        at INFO (AGO-1017).
         """
         mock_server = MagicMock()
         mock_create.return_value = mock_server
@@ -294,8 +297,13 @@ class TestCmdServe:
         args = _build_parser().parse_args(
             ["serve", "--transport", "http", "--host", "127.0.0.1", "--port", "9000"]
         )
-        _cmd_serve(args)
+        with caplog.at_level(logging.INFO, logger="markdown_vault_mcp._cli_impl"):
+            _cmd_serve(args)
 
+        assert (
+            "event_store: none (MARKDOWN_VAULT_MCP_EVENT_STORE_URL unset)"
+            in caplog.messages
+        )
         mock_build_es.assert_not_called()
         mock_server.http_app.assert_called_once_with(
             path="/mcp",
@@ -320,6 +328,7 @@ class TestCmdServe:
         mock_load_config: MagicMock,
         mock_build_es: MagicMock,
         _mock_uvicorn_run: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """EVENT_STORE_URL set: the store is built from it and passed through."""
         mock_server = MagicMock()
@@ -332,8 +341,10 @@ class TestCmdServe:
         mock_server.http_app.return_value = MagicMock()
 
         args = _build_parser().parse_args(["serve", "--transport", "http"])
-        _cmd_serve(args)
+        with caplog.at_level(logging.INFO, logger="markdown_vault_mcp._cli_impl"):
+            _cmd_serve(args)
 
+        assert not any(m.startswith("event_store: none") for m in caplog.messages)
         mock_build_es.assert_called_once_with("file:///data/state/events")
         mock_server.http_app.assert_called_once_with(
             path="/mcp",

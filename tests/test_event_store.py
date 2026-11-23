@@ -87,7 +87,7 @@ class TestEventStoreConfig:
         assert config.event_store_url == "memory://"
 
     def test_event_store_url_empty_is_none(self, monkeypatch):
-        """Empty EVENT_STORE_URL yields None (file default)."""
+        """Empty EVENT_STORE_URL yields None (serve builds no event store)."""
         monkeypatch.setenv("MARKDOWN_VAULT_MCP_SOURCE_DIR", "/tmp/vault")
         monkeypatch.setenv("MARKDOWN_VAULT_MCP_EVENT_STORE_URL", "  ")
         config = load_config()

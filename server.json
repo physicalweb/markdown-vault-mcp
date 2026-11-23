@@ -44,8 +44,7 @@
         },
         {
           "name": "MARKDOWN_VAULT_MCP_EVENT_STORE_URL",
-          "description": "Event store backend for HTTP session persistence (file:///path or memory://)",
-          "default": "file:///data/state/events"
+          "description": "Event store backend for HTTP session persistence (file:///path or memory://); unset builds none"
         },
         {
           "name": "MARKDOWN_VAULT_MCP_SERVER_NAME",
@@ -275,8 +274,7 @@
         },
         {
           "name": "MARKDOWN_VAULT_MCP_EVENT_STORE_URL",
-          "description": "Event store backend for HTTP session persistence (file:///path or memory://)",
-          "default": "file:///data/state/events"
+          "description": "Event store backend for HTTP session persistence (file:///path or memory://); unset builds none"
         },
         {
           "name": "MARKDOWN_VAULT_MCP_SERVER_NAME",

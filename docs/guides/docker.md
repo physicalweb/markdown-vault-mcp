@@ -232,7 +232,7 @@ For long-running HTTP sessions (especially with MCP Apps), configure the event s
 MARKDOWN_VAULT_MCP_EVENT_STORE_URL=file:///data/state/events
 ```
 
-This is the default when using the Docker image with the `state-data` volume. For development, use `memory://` (sessions lost on restart).
+This is opt-in: with the variable unset (the default) no event store is built and a dropped SSE stream is not resumed. For development, use `memory://` (sessions lost on restart).
 
 ### Verify
 
