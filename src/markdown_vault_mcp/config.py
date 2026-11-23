@@ -121,7 +121,7 @@ class CollectionConfig:
             prompts are loaded at startup.  ``None`` disables user prompts.
         event_store_url: URL for the FastMCP persistent event store used by
             the HTTP transport (e.g. ``"file:///data/state/events"``).
-            ``None`` defaults to ``/data/state/events``.
+            ``None`` (default) means no event store: no SSE resumption.
         auth_mode: Explicit OIDC mode override: ``"oidc-proxy"`` or
             ``"remote"``.  ``None`` (default) means auto-detect from which
             OIDC env vars are present.  Bearer and multi-auth are determined
@@ -425,8 +425,8 @@ def load_config() -> CollectionConfig:
     - ``MARKDOWN_VAULT_MCP_PROMPTS_FOLDER``: relative folder path where
       user-defined prompt markdown files are stored; default ``None`` (disabled).
     - ``MARKDOWN_VAULT_MCP_EVENT_STORE_URL``: event store backend for HTTP session
-      persistence; ``file:///path`` (default ``/data/state/events``) or
-      ``memory://`` (in-memory, lost on restart).
+      persistence; ``file:///path`` or ``memory://`` (in-memory, lost on
+      restart); unset (default) builds no event store.
 
     **Server identity:**
 
@@ -693,7 +693,7 @@ def load_config() -> CollectionConfig:
     raw_event_store_url = (_env("EVENT_STORE_URL") or "").strip()
     event_store_url: str | None = raw_event_store_url or None
     logger.debug(
-        "load_config: event_store_url=%s", event_store_url or "not set (file default)"
+        "load_config: event_store_url=%s", event_store_url or "not set (no event store)"
     )
 
     # --- Server identity ---

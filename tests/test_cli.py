@@ -279,14 +279,15 @@ class TestCmdServe:
         mock_build_es: MagicMock,
         mock_uvicorn_run: MagicMock,
     ) -> None:
-        """_cmd_serve builds ASGI app via http_app() and runs uvicorn for http."""
+        """_cmd_serve builds ASGI app via http_app() and runs uvicorn for http.
+
+        With EVENT_STORE_URL unset no event store is built (AGO-1017).
+        """
         mock_server = MagicMock()
         mock_create.return_value = mock_server
         mock_config = MagicMock()
         mock_config.event_store_url = None
         mock_load_config.return_value = mock_config
-        mock_event_store = MagicMock()
-        mock_build_es.return_value = mock_event_store
         mock_app = MagicMock()
         mock_server.http_app.return_value = mock_app
 
@@ -295,10 +296,11 @@ class TestCmdServe:
         )
         _cmd_serve(args)
 
+        mock_build_es.assert_not_called()
         mock_server.http_app.assert_called_once_with(
             path="/mcp",
             transport="http",
-            event_store=mock_event_store,
+            event_store=None,
         )
         mock_uvicorn_run.assert_called_once_with(
             mock_app,
@@ -306,6 +308,37 @@ class TestCmdServe:
             port=9000,
             timeout_graceful_shutdown=3,
             lifespan="on",
+        )
+
+    @patch("uvicorn.run")
+    @patch("markdown_vault_mcp.server.build_event_store")
+    @patch("markdown_vault_mcp._cli_impl.load_config")
+    @patch("markdown_vault_mcp.server.make_server")
+    def test_serve_http_builds_event_store_when_url_set(
+        self,
+        mock_create: MagicMock,
+        mock_load_config: MagicMock,
+        mock_build_es: MagicMock,
+        _mock_uvicorn_run: MagicMock,
+    ) -> None:
+        """EVENT_STORE_URL set: the store is built from it and passed through."""
+        mock_server = MagicMock()
+        mock_create.return_value = mock_server
+        mock_config = MagicMock()
+        mock_config.event_store_url = "file:///data/state/events"
+        mock_load_config.return_value = mock_config
+        mock_event_store = MagicMock()
+        mock_build_es.return_value = mock_event_store
+        mock_server.http_app.return_value = MagicMock()
+
+        args = _build_parser().parse_args(["serve", "--transport", "http"])
+        _cmd_serve(args)
+
+        mock_build_es.assert_called_once_with("file:///data/state/events")
+        mock_server.http_app.assert_called_once_with(
+            path="/mcp",
+            transport="http",
+            event_store=mock_event_store,
         )
 
     @patch("uvicorn.run")

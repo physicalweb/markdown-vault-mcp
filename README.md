@@ -211,7 +211,7 @@ All configuration is via environment variables with the `MARKDOWN_VAULT_MCP_` pr
 | `MARKDOWN_VAULT_MCP_SERVER_NAME` | `markdown-vault-mcp` | MCP server name shown to clients; useful for multi-instance setups |
 | `MARKDOWN_VAULT_MCP_INSTRUCTIONS` | (auto) | System-level instructions injected into LLM context; defaults to a description that reflects read-only vs read-write state |
 | `MARKDOWN_VAULT_MCP_HTTP_PATH` | `/mcp` | HTTP endpoint path for streamable HTTP transport (used by `serve --transport http`) |
-| `MARKDOWN_VAULT_MCP_EVENT_STORE_URL` | `file:///data/state/events` | Event store backend for HTTP session persistence. `file:///path` (default) survives restarts; `memory://` for dev (lost on restart). |
+| `MARKDOWN_VAULT_MCP_EVENT_STORE_URL` | (unset: no event store) | Event store for SSE stream resumption over HTTP. Unset (default): none is built, nothing is written, and a dropped stream is not resumed. `file:///path` survives restarts; `memory://` is lost on restart. The SDK keys event streams by JSON-RPC request id across sessions, so a shared store's trim races once a stream holds 100 events and can fail new handshakes (fork, AGO-1017). |
 | `MARKDOWN_VAULT_MCP_APP_DOMAIN` | (auto) | Override the Claude app domain used for MCP Apps iframe sandboxing. Auto-computed from `BASE_URL` when not set. |
 | `FASTMCP_LOG_LEVEL` | `INFO` | Log level for FastMCP internals (`DEBUG`, `INFO`, `WARNING`, `ERROR`). App loggers default to `INFO`. `-v` overrides both to `DEBUG`. |
 | `FASTMCP_ENABLE_RICH_LOGGING` | `true` | Set to `false` for plain/structured JSON log output instead of Rich-formatted output. |

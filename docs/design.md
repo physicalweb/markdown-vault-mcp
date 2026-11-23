@@ -498,13 +498,18 @@ Callers using `Collection` as a Python library must call `close()` explicitly
 
 ### HTTP Session Persistence
 
-For HTTP/streamable-HTTP transport, the server uses an `EventStore` so MCP
-sessions survive container restarts. The backend is configured via
-`MARKDOWN_VAULT_MCP_EVENT_STORE_URL`:
+For HTTP/streamable-HTTP transport, the server can use an `EventStore` so a
+client can resume a dropped SSE stream (`Last-Event-ID`). The backend is
+configured via `MARKDOWN_VAULT_MCP_EVENT_STORE_URL`:
 
-- **Default** (unset or `file:///path`): `FileTreeStore` at
-  `/data/state/events`. Sessions persist on disk inside the Docker state volume.
-- **`memory://`**: In-memory store; sessions are lost on restart. Suitable for
+- **Default** (unset): no event store. Nothing is written; streams carry no
+  event ids, so a dropped stream is not resumed. (Fork, AGO-1017: the MCP SDK
+  keys event streams by JSON-RPC request id across all sessions, so every
+  session's `initialize` shares stream `"0"`; once it holds 100 events, two
+  concurrent stores race on the trim and the loser fails the handshake with
+  `FileNotFoundError`.)
+- **`file:///path`**: `FileTreeStore` at that path. Events persist on disk.
+- **`memory://`**: In-memory store; events are lost on restart. Suitable for
   development or single-shot CI environments.
 
 The event store is only constructed for HTTP transport (`serve --transport http`).

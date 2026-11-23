@@ -97,7 +97,15 @@ def _cmd_serve(args: argparse.Namespace) -> None:
         import uvicorn
 
         config = load_config()
-        event_store = build_event_store(config.event_store_url)
+        # No event store unless EVENT_STORE_URL asks for one (AGO-1017): the
+        # SDK keys event streams by JSON-RPC request id across sessions, so a
+        # store shared by every session's ``initialize`` (id 0) races on its
+        # trim and fails about half of new handshakes once it holds 100 events.
+        event_store = (
+            build_event_store(config.event_store_url)
+            if config.event_store_url
+            else None
+        )
         # FastMCP's run() doesn't pass event_store through to http_app(),
         # so we build the ASGI app and run uvicorn directly.
         app = server.http_app(
